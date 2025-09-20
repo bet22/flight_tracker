@@ -14,8 +14,8 @@ jobs:
 
       - name: Verify Go modules
         run: | 
-          go mod tidy
-          go mod verify
+          docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod tidy
+          docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod verify
 
 #      - name: Stop and remove old container
 #        run: |
