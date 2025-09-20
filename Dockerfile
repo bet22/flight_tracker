@@ -1,8 +1,13 @@
 FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
-COPY . .
+
+# Сначала копируем только файлы модулей
+COPY go.mod go.sum ./
 RUN go mod download
+
+# Затем копируем весь код и собираем
+COPY . .
 RUN go build -o main .
 
 FROM alpine:latest

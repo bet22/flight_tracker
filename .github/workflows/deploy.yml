@@ -12,10 +12,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Stop and remove old container
-        run: |
-          docker stop my-app || true
-          docker rm my-app || true
+      - name: Verify Go modules
+        run: | 
+          go mod tidy
+          go mod verify
+
+#      - name: Stop and remove old container
+#        run: |
+#          docker stop my-app || true
+#          docker rm my-app || true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
