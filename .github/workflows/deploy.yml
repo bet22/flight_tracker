@@ -31,6 +31,6 @@ jobs:
           docker-compose build --no-cache
           docker-compose up -d 
 
-#      - name: Clean up old imag
-#        run: |
-#          docker image prune -f
+      - name: Clean up old imag
+        run: |
+          docker image prune -f

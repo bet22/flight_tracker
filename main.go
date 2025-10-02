@@ -170,7 +170,7 @@ func formatMessage(flights []Flight, config *AppConfig) string {
 	for origin, originFlights := range flightsByOrigin {
 		// Сортируем по цене
 		sort.Slice(originFlights, func(i, j int) bool {
-			return originFlights[i].Duration < originFlights[j].Duration
+			return originFlights[i].Price < originFlights[j].Price
 		})
 
 		cityName := getCityName(origin)
