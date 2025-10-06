@@ -14,18 +14,30 @@ type AppConfig struct {
 	TelegramBotUrl        string
 	TelegramBotToken      string
 	TelegramChatID        string
+	AdminUsers            []int64
 	TravelPayoutsToken    string
 	TravelPayoutsUrlPrice string
 	OriginIATA            []string
 	DestinationIATA       string
 	MaxPrice              int
 	MonthsToSearch        int
+	MaxFlightTime         int
 }
 
 func loadConfig() (*AppConfig, error) {
 	// Загружаем .env файл
 	if err := godotenv.Load(); err != nil {
 		log.Println("Файл .env не найден, используем переменные окружения")
+	}
+
+	var adminUsers []int64
+	if adminIDs := getEnv("ADMIN_USER_IDS", ""); adminIDs != "" {
+		ids := strings.Split(adminIDs, ",")
+		for _, idStr := range ids {
+			if id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64); err == nil {
+				adminUsers = append(adminUsers, id)
+			}
+		}
 	}
 
 	return &AppConfig{
@@ -38,6 +50,8 @@ func loadConfig() (*AppConfig, error) {
 		DestinationIATA:       os.Getenv("DESTINATION_IATA"),
 		MaxPrice:              getEnvInt("MAX_PRICE", 30000),
 		MonthsToSearch:        getEnvInt("MONTHS_TO_SEARCH", 3),
+		AdminUsers:            adminUsers,
+		MaxFlightTime:         getEnvInt("MAX_FLIGHT_TIME", 1440),
 	}, nil
 }
 
@@ -53,6 +67,13 @@ func getEnvInt(key string, defaultValue int) int {
 	}
 
 	return value
+}
+
+func getEnv(key string, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
 }
 
 // Для строкового массива
