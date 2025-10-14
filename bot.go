@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -97,6 +98,23 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 }
 
 func (b *Bot) handleSearch(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+
+	// 🆕 Если указано направление как второй параметр
+	if len(args) >= 2 {
+		if len(args) >= 3 {
+			destination := strings.ToUpper(args[1])
+			monthsToSearch, err := strconv.Atoi(args[2])
+			if err != nil {
+
+			}
+			b.setDestinationAndMonthsToSearch(message.Chat.ID, destination, monthsToSearch)
+		} else {
+			destination := strings.ToUpper(args[1])
+			b.setDestination(message.Chat.ID, destination)
+		}
+	}
+
 	// Отправляем сообщение о начале поиска
 	msg := tgbotapi.NewMessage(message.Chat.ID, "🔍 <b>Начинаю поиск билетов...</b>\nЭто займет несколько секунд.")
 	msg.ParseMode = "HTML"
@@ -163,6 +181,37 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 	b.api.Send(msg)
 }
 
+func (b *Bot) setDestination(chatID int64, destination string) {
+	oldDestination := b.config.DestinationIATA
+	b.flightSearch.SetDestination(destination)
+
+	msg := tgbotapi.NewMessage(chatID,
+		fmt.Sprintf("✅ <b>Направление изменено:</b>\n%s → %s\n➡️\n%s → %s",
+			strings.Join(b.config.OriginIATA, "/"),
+			getCityName(oldDestination),
+			strings.Join(b.config.OriginIATA, "/"),
+			getCityName(destination)))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
+
+func (b *Bot) setDestinationAndMonthsToSearch(chatID int64, destination string, monthsToSearch int) {
+	oldDestination := b.config.DestinationIATA
+	b.flightSearch.SetDestination(destination)
+	oldMonthsToSearch := b.config.MonthsToSearch
+	b.flightSearch.SetMonthsToSearch(monthsToSearch)
+
+	msg := tgbotapi.NewMessage(chatID,
+		fmt.Sprintf("✅ <b>Направление и глибина поиска изменены:</b>\n%s → %s\n➡️\n%s → %s</b>\n%d мес.→ %d мес.",
+			strings.Join(b.config.OriginIATA, "/"),
+			getCityName(oldDestination),
+			strings.Join(b.config.OriginIATA, "/"),
+			getCityName(destination),
+			b.config.MonthsToSearch,
+			oldMonthsToSearch))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
 func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 	text := "❓ Неизвестная команда. Используйте /help для просмотра доступных команд."
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)

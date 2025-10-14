@@ -277,3 +277,11 @@ func min(a, b int) int {
 	}
 	return b
 }
+
+func (fs *FlightSearch) SetDestination(destination string) {
+	fs.config.DestinationIATA = strings.ToUpper(destination)
+}
+
+func (fs *FlightSearch) SetMonthsToSearch(monthsToSearch int) {
+	fs.config.MonthsToSearch = monthsToSearch
+}
