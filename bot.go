@@ -104,6 +104,11 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 	if len(args) >= 2 {
 		if len(args) >= 3 {
 			destination := strings.ToUpper(args[1])
+
+		    success := b.setDestinationByCityName(message.Chat.ID, destination)
+            if !success {
+                return // 🆕 Если город не найден, выходим
+            }
 			monthsToSearch, err := strconv.Atoi(args[2])
 			if err != nil {
 
