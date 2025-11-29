@@ -11,71 +11,71 @@ import (
 )
 
 var CityAirports = map[string][]string{
-    // Азия
-    "бали":         {"DPS"},
-    "денпасар":     {"DPS"},
-    "бангкок":      {"BKK"},
-    "пхукет":       {"HKT"},
-    "сингапур":     {"SIN"},
-    "куалалумпур":  {"KUL"},
-    "куала-лумпур": {"KUL"},
-    "ханой":        {"HAN"},
-    "хошимин":      {"SGN"},
-    "той":          {"NRT", "HND"},
-    "сеул":         {"ICN", "GMP"},
-    "пекин":        {"PEK"},
-    "шахай":        {"PVG"},
-    "шанхай":       {"PVG"},
-    "дел":          {"DEL"},
-    "дуба":         {"DXB"},
-    "дубай":        {"DXB"},
-    "стамбул":      {"IST"},
+	// Азия
+	"бали":         {"DPS"},
+	"денпасар":     {"DPS"},
+	"бангкок":      {"BKK"},
+	"пхукет":       {"HKT"},
+	"сингапур":     {"SIN"},
+	"куалалумпур":  {"KUL"},
+	"куала-лумпур": {"KUL"},
+	"ханой":        {"HAN"},
+	"хошимин":      {"SGN"},
+	"той":          {"NRT", "HND"},
+	"сеул":         {"ICN", "GMP"},
+	"пекин":        {"PEK"},
+	"шахай":        {"PVG"},
+	"шанхай":       {"PVG"},
+	"дел":          {"DEL"},
+	"дуба":         {"DXB"},
+	"дубай":        {"DXB"},
+	"стамбул":      {"IST"},
 
-    // Европа
-    "франкфурт":    {"FRA"},
-    "париж":        {"CDG", "ORY"},
-    "лондон":       {"LHR", "LGW", "STN"},
-    "берлин":       {"BER", "SXF", "TXL"},
-    "амстердам":    {"AMS"},
-    "праж":         {"PRG"},
-    "прага":        {"PRG"},
-    "рим":          {"FCO"},
-    "милан":        {"MXP", "LIN"},
-    "мадрид":       {"MAD"},
-    "барселон":     {"BCN"},
-    "барселона":    {"BCN"},
-    "вена":         {"VIE"},
-    "варшав":       {"WAW"},
-    "варшава":      {"WAW"},
+	// Европа
+	"франкфурт": {"FRA"},
+	"париж":     {"CDG", "ORY"},
+	"лондон":    {"LHR", "LGW", "STN"},
+	"берлин":    {"BER", "SXF", "TXL"},
+	"амстердам": {"AMS"},
+	"праж":      {"PRG"},
+	"прага":     {"PRG"},
+	"рим":       {"FCO"},
+	"милан":     {"MXP", "LIN"},
+	"мадрид":    {"MAD"},
+	"барселон":  {"BCN"},
+	"барселона": {"BCN"},
+	"вена":      {"VIE"},
+	"варшав":    {"WAW"},
+	"варшава":   {"WAW"},
 
-    // Америка
-    "ньюйорк":      {"JFK", "LGA", "EWR"},
-    "нью-йорк":     {"JFK", "LGA", "EWR"},
-    "лосанделес":   {"LAX"},
-    "лос-анделес":  {"LAX"},
-    "маям":         {"MIA"},
-    "майами":       {"MIA"},
-    "чикаг":        {"ORD", "MDW"},
-    "чикаго":       {"ORD", "MDW"},
-    "торонт":       {"YYZ"},
-    "торонто":      {"YYZ"},
-    "вancouver":    {"YVR"},
-    "ванкувер":     {"YVR"},
+	// Америка
+	"ньюйорк":     {"JFK", "LGA", "EWR"},
+	"нью-йорк":    {"JFK", "LGA", "EWR"},
+	"лосанделес":  {"LAX"},
+	"лос-анделес": {"LAX"},
+	"маям":        {"MIA"},
+	"майами":      {"MIA"},
+	"чикаг":       {"ORD", "MDW"},
+	"чикаго":      {"ORD", "MDW"},
+	"торонт":      {"YYZ"},
+	"торонто":     {"YYZ"},
+	"вancouver":   {"YVR"},
+	"ванкувер":    {"YVR"},
 
-    // Россия и СНГ
-    "москв":        {"SVO", "DME", "VKO"},
-    "москва":       {"SVO", "DME", "VKO"},
-    "санктпетербург": {"LED"},
-    "петербург":    {"LED"},
-    "екатеринбург": {"SVX"},
-    "красноярск":   {"KJA"},
-    "иркутск":      {"IKT"},
-    "владивосток":  {"VVO"},
-    "хабаровск":    {"KHV"},
-    "алмат":        {"ALA"},
-    "алматы":       {"ALA"},
-    "ташкент":      {"TAS"},
-    "бишкек":       {"FRU"},
+	// Россия и СНГ
+	"москв":          {"SVO", "DME", "VKO"},
+	"москва":         {"SVO", "DME", "VKO"},
+	"санктпетербург": {"LED"},
+	"петербург":      {"LED"},
+	"екатеринбург":   {"SVX"},
+	"красноярск":     {"KJA"},
+	"иркутск":        {"IKT"},
+	"владивосток":    {"VVO"},
+	"хабаровск":      {"KHV"},
+	"алмат":          {"ALA"},
+	"алматы":         {"ALA"},
+	"ташкент":        {"TAS"},
+	"бишкек":         {"FRU"},
 }
 
 type Flight struct {
@@ -111,39 +111,39 @@ type FlightSearch struct {
 }
 
 func FindAirportCode(cityName string) ([]string, string) {
-    // Приводим к нижнему регистру и убираем пробелы
-    normalized := strings.ToLower(strings.TrimSpace(cityName))
+	// Приводим к нижнему регистру и убираем пробелы
+	normalized := strings.ToLower(strings.TrimSpace(cityName))
 
-    // Прямой поиск
-    if codes, exists := CityAirports[normalized]; exists {
-        return codes, getCityName(codes[0])
-    }
+	// Прямой поиск
+	if codes, exists := CityAirports[normalized]; exists {
+		return codes, getCityName(codes[0])
+	}
 
-    // Поиск по частичному совпадению
-    for city, codes := range CityAirports {
-        if strings.Contains(normalized, city) || strings.Contains(city, normalized) {
-            return codes, getCityName(codes[0])
-        }
-    }
+	// Поиск по частичному совпадению
+	for city, codes := range CityAirports {
+		if strings.Contains(normalized, city) || strings.Contains(city, normalized) {
+			return codes, getCityName(codes[0])
+		}
+	}
 
-    return nil, ""
+	return nil, ""
 }
 
 func GetCityList() string {
-    var cities []string
+	var cities []string
 
-    // Собираем уникальные города (берем первый аэропорт для каждого города)
-    addedCities := make(map[string]bool)
-    for _, codes := range CityAirports {
-        if len(codes) > 0 && !addedCities[codes[0]] {
-            cityName := getCityName(codes[0])
-            cities = append(cities, fmt.Sprintf("%s - %s", codes[0], cityName))
-            addedCities[codes[0]] = true
-        }
-    }
+	// Собираем уникальные города (берем первый аэропорт для каждого города)
+	addedCities := make(map[string]bool)
+	for _, codes := range CityAirports {
+		if len(codes) > 0 && !addedCities[codes[0]] {
+			cityName := getCityName(codes[0])
+			cities = append(cities, fmt.Sprintf("%s - %s", codes[0], cityName))
+			addedCities[codes[0]] = true
+		}
+	}
 
-    sort.Strings(cities)
-    return strings.Join(cities, "\n")
+	sort.Strings(cities)
+	return strings.Join(cities, "\n")
 }
 
 func NewFlightSearch(config *AppConfig) *FlightSearch {
@@ -308,77 +308,77 @@ func (fs *FlightSearch) formatMessage(flights []Flight) string {
 // Вспомогательные функции
 func getCityName(iata string) string {
 	cityNames := map[string]string{
-            // Азия
-            "DPS": "Денпасар (Бали)",
-            "BKK": "Бангкок",
-            "HKT": "Пхукет",
-            "SYD": "Сидней",
-            "AKL": "Окленд",
-            "SIN": "Сингапур",
-            "KUL": "Куала-Лумпур",
-            "HAN": "Ханой",
-            "SGN": "Хошимин",
-            "NRT": "Токио (Наррита)",
-            "HND": "Токио (Ханеда)",
-            "ICN": "Сеул",
-            "GMP": "Сеул (Кимхо)",
-            "PEK": "Пекин",
-            "PVG": "Шанхай",
-            "DEL": "Дели",
-            "DXB": "Дубай",
-            "IST": "Стамбул",
+		// Азия
+		"DPS": "Денпасар (Бали)",
+		"BKK": "Бангкок",
+		"HKT": "Пхукет",
+		"SYD": "Сидней",
+		"AKL": "Окленд",
+		"SIN": "Сингапур",
+		"KUL": "Куала-Лумпур",
+		"HAN": "Ханой",
+		"SGN": "Хошимин",
+		"NRT": "Токио (Наррита)",
+		"HND": "Токио (Ханеда)",
+		"ICN": "Сеул",
+		"GMP": "Сеул (Кимхо)",
+		"PEK": "Пекин",
+		"PVG": "Шанхай",
+		"DEL": "Дели",
+		"DXB": "Дубай",
+		"IST": "Стамбул",
 
-            // Европа
-            "FRA": "Франкфурт",
-            "CDG": "Париж (Шарль-де-Голль)",
-            "ORY": "Париж (Орли)",
-            "LHR": "Лондон (Хитроу)",
-            "LGW": "Лондон (Гатвик)",
-            "STN": "Лондон (Станстед)",
-            "BER": "Берлин",
-            "AMS": "Амстердам",
-            "PRG": "Прага",
-            "FCO": "Рим",
-            "MXP": "Милан",
-            "MAD": "Мадрид",
-            "BCN": "Барселона",
-            "VIE": "Вена",
-            "WAW": "Варшава",
+		// Европа
+		"FRA": "Франкфурт",
+		"CDG": "Париж (Шарль-де-Голль)",
+		"ORY": "Париж (Орли)",
+		"LHR": "Лондон (Хитроу)",
+		"LGW": "Лондон (Гатвик)",
+		"STN": "Лондон (Станстед)",
+		"BER": "Берлин",
+		"AMS": "Амстердам",
+		"PRG": "Прага",
+		"FCO": "Рим",
+		"MXP": "Милан",
+		"MAD": "Мадрид",
+		"BCN": "Барселона",
+		"VIE": "Вена",
+		"WAW": "Варшава",
 
-            // Америка
-            "JFK": "Нью-Йорк (Кеннеди)",
-            "LGA": "Нью-Йорк (ЛаГуардиа)",
-            "EWR": "Нью-Йорк (Ньюарк)",
-            "LAX": "Лос-Анджелес",
-            "MIA": "Майами",
-            "ORD": "Чикаго",
-            "YYZ": "Торонто",
-            "YVR": "Ванкувер",
+		// Америка
+		"JFK": "Нью-Йорк (Кеннеди)",
+		"LGA": "Нью-Йорк (ЛаГуардиа)",
+		"EWR": "Нью-Йорк (Ньюарк)",
+		"LAX": "Лос-Анджелес",
+		"MIA": "Майами",
+		"ORD": "Чикаго",
+		"YYZ": "Торонто",
+		"YVR": "Ванкувер",
 
-            // Россия и СНГ
-            "SVO": "Москва (Шереметьево)",
-            "DME": "Москва (Домодедово)",
-            "VKO": "Москва (Внуково)",
-            "LED": "Санкт-Петербург",
-            "SVX": "Екатеринбург",
-            "KJA": "Красноярск",
-            "IKT": "Иркутск",
-            "VVO": "Владивосток",
-            "KHV": "Хабаровск",
-            "ALA": "Алматы",
-            "TAS": "Ташкент",
-            "FRU": "Бишкек",
+		// Россия и СНГ
+		"SVO": "Москва (Шереметьево)",
+		"DME": "Москва (Домодедово)",
+		"VKO": "Москва (Внуково)",
+		"LED": "Санкт-Петербург",
+		"SVX": "Екатеринбург",
+		"KJA": "Красноярск",
+		"IKT": "Иркутск",
+		"VVO": "Владивосток",
+		"KHV": "Хабаровск",
+		"ALA": "Алматы",
+		"TAS": "Ташкент",
+		"FRU": "Бишкек",
 
-            // Города вылета
-            "OVB": "Новосибирск",
-            "BAX": "Барнаул",
-        }
+		// Города вылета
+		"OVB": "Новосибирск",
+		"BAX": "Барнаул",
+	}
 
-        if name, ok := cityNames[iata]; ok {
-            return name
-        }
+	if name, ok := cityNames[iata]; ok {
+		return name
+	}
 
-        return iata
+	return iata
 }
 
 func getRussianDayOfWeek(day time.Weekday) string {
