@@ -1,4 +1,4 @@
-module flight-tracker
+module flight_tracker
 
 go 1.21
 

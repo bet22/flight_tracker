@@ -105,10 +105,10 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 		if len(args) >= 3 {
 			destination := strings.ToUpper(args[1])
 
-		    success := b.setDestinationByCityName(message.Chat.ID, destination)
-            if !success {
-                return // 🆕 Если город не найден, выходим
-            }
+			success := b.setDestinationByCityName(message.Chat.ID, destination)
+			if !success {
+				return // 🆕 Если город не найден, выходим
+			}
 			monthsToSearch, err := strconv.Atoi(args[2])
 			if err != nil {
 
@@ -116,7 +116,8 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 			b.setDestinationAndMonthsToSearch(message.Chat.ID, destination, monthsToSearch)
 		} else {
 			destination := strings.ToUpper(args[1])
-			b.setDestination(message.Chat.ID, destination)
+			b.setDestinationByCityName(message.Chat.ID, destination)
+			//b.setDestination(message.Chat.ID, destination)
 		}
 	}
 
@@ -229,5 +230,61 @@ func (b *Bot) SendMessage(chatID int64, text string) {
 	msg.ParseMode = "HTML"
 	msg.DisableWebPagePreview = true
 	msg.DisableNotification = true
+	b.api.Send(msg)
+}
+
+// 🆕 ДОБАВЛЕНО: установка направления по названию города
+func (b *Bot) setDestinationByCityName(chatID int64, cityName string) bool {
+	codes, foundCityName := FindAirportCode(cityName)
+
+	if codes == nil {
+		// 🆕 Город не найден, показываем подсказку
+		msg := tgbotapi.NewMessage(chatID,
+			fmt.Sprintf("❌ <b>Город '%s' не найден.</b>\n\n"+
+				"💡 <i>Используйте:</i>\n"+
+				"<code>/search бангкок</code> - поиск по названию\n"+
+				"<code>/search BKK</code> - поиск по коду аэропорта\n"+
+				"<code>/cities</code> - список доступных городов", cityName))
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return false
+	}
+
+	// 🆕 Если найдено несколько аэропортов, берем первый
+	destination := codes[0]
+
+	oldDestination := b.config.DestinationIATA
+	b.flightSearch.SetDestination(destination)
+
+	var airportInfo string
+	if len(codes) > 1 {
+		airportInfo = fmt.Sprintf("\n🏢 Доступные аэропорты: %s", strings.Join(codes, ", "))
+	}
+
+	msg := tgbotapi.NewMessage(chatID,
+		fmt.Sprintf("✅ <b>Направление изменено:</b>\n%s → %s\n➡️\n%s → %s%s",
+			strings.Join(b.config.OriginIATA, "/"),
+			getCityName(oldDestination),
+			strings.Join(b.config.OriginIATA, "/"),
+			foundCityName,
+			airportInfo))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+	return true
+}
+
+// 🆕 ДОБАВЛЕНО: команда для списка городов (заменяет /destinations)
+func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
+	text := "🏙️ <b>Доступные города для поиска:</b>\n\n"
+	text += GetCityList()
+	text += "\n\n💡 <i>Используйте команду /search ГОРОД для поиска</i>\n"
+	text += "Например:\n"
+	text += "<code>/search бангкок</code> - поиск по названию\n"
+	text += "<code>/search BKK</code> - поиск по коду аэропорта\n"
+	text += "<code>/search сидней</code> - поиск в Сидней\n"
+	text += "<code>/search</code> - поиск в текущее направление"
+
+	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	msg.ParseMode = "HTML"
 	b.api.Send(msg)
 }
