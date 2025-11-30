@@ -17,6 +17,11 @@ jobs:
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod tidy
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod verify
 
+      - name: Debug path
+        run: |
+          pwd 
+          ls -la
+
 #      - name: Stop and remove old container
 #        run: |
 #          docker stop my-app || true
