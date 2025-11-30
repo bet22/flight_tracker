@@ -12,15 +12,16 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Debug path
+        run: |
+            pwd 
+            ls -la
+
       - name: Verify Go modules
         run: | 
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod tidy
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod verify
 
-      - name: Debug path
-        run: |
-          pwd 
-          ls -la
 
 #      - name: Stop and remove old container
 #        run: |
