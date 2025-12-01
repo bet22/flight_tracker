@@ -105,18 +105,19 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 		if len(args) >= 3 {
 			destination := strings.ToUpper(args[1])
 
-			success := b.setDestinationByCityName(message.Chat.ID, destination)
-			if !success {
-				return // 🆕 Если город не найден, выходим
-			}
 			monthsToSearch, err := strconv.Atoi(args[2])
 			if err != nil {
 
 			}
-			b.setDestinationAndMonthsToSearch(message.Chat.ID, destination, monthsToSearch)
+			success := b.setDestinationByCityName(message.Chat.ID, destination, monthsToSearch)
+			if !success {
+				return // 🆕 Если город не найден, выходим
+			}
+
+			//b.setDestinationAndMonthsToSearch(message.Chat.ID, destination, monthsToSearch)
 		} else {
 			destination := strings.ToUpper(args[1])
-			b.setDestinationByCityName(message.Chat.ID, destination)
+			b.setDestinationByCityName(message.Chat.ID, destination, b.config.MonthsToSearch)
 			//b.setDestination(message.Chat.ID, destination)
 		}
 	}
@@ -233,8 +234,8 @@ func (b *Bot) SendMessage(chatID int64, text string) {
 	b.api.Send(msg)
 }
 
-// 🆕 ДОБАВЛЕНО: установка направления по названию города
-func (b *Bot) setDestinationByCityName(chatID int64, cityName string) bool {
+// установка направления по названию города
+func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSearch int) bool {
 	codes, foundCityName := FindAirportCode(cityName)
 
 	if codes == nil {
@@ -253,6 +254,7 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string) bool {
 	// 🆕 Если найдено несколько аэропортов, берем первый
 	destination := codes[0]
 
+	b.flightSearch.SetMonthsToSearch(monthsToSearch)
 	oldDestination := b.config.DestinationIATA
 	b.flightSearch.SetDestination(destination)
 
@@ -273,7 +275,7 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string) bool {
 	return true
 }
 
-// 🆕 ДОБАВЛЕНО: команда для списка городов (заменяет /destinations)
+// команда для списка городов (заменяет /destinations)
 func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 	text := "🏙️ <b>Доступные города для поиска:</b>\n\n"
 	text += GetCityList()

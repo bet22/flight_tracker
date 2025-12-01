@@ -21,6 +21,7 @@ var CityAirports = map[string][]string{
 	"куала-лумпур": {"KUL"},
 	"ханой":        {"HAN"},
 	"хошимин":      {"SGN"},
+	"дананг":       {"DAD"},
 	"той":          {"NRT", "HND"},
 	"сеул":         {"ICN", "GMP"},
 	"пекин":        {"PEK"},

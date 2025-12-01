@@ -7,7 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 # Затем копируем весь код и собираем
-COPY . .
+COPY main/ .
 RUN go build -o main .
 
 FROM alpine:latest

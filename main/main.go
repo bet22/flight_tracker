@@ -27,7 +27,7 @@ func main() {
 	}
 
 	// Запускаем автоматический поиск по расписанию
-	//go startScheduledSearch(bot, config, flightSearch)
+	go startScheduledSearch(bot, config, flightSearch)
 
 	// Запускаем бота (блокирующая операция)
 	bot.Start()
