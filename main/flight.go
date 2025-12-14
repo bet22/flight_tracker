@@ -433,3 +433,12 @@ func (fs *FlightSearch) SetDestination(destination string) {
 func (fs *FlightSearch) SetMonthsToSearch(monthsToSearch int) {
 	fs.config.MonthsToSearch = monthsToSearch
 }
+
+func (fs *FlightSearch) SetOriginIATA(origin string) {
+	for _, existing := range fs.config.OriginIATA {
+		if existing == origin {
+			return
+		}
+	}
+	fs.config.OriginIATA = []string{origin}
+}

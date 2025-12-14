@@ -188,6 +188,20 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 	b.api.Send(msg)
 }
 
+func (b *Bot) handleOrigin(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+
+	if len(args) >= 2 {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"❌ Укажите город вылета. Например: <code>/origin set москва</code>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+	cityName := strings.Join(args[2:], " ")
+	b.setOrigin(message.Chat.ID, cityName)
+}
+
 func (b *Bot) setDestination(chatID int64, destination string) {
 	oldDestination := b.config.DestinationIATA
 	b.flightSearch.SetDestination(destination)
@@ -234,7 +248,7 @@ func (b *Bot) SendMessage(chatID int64, text string) {
 	b.api.Send(msg)
 }
 
-// установка направления по названию города
+// Установка направления по названию города
 func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSearch int) bool {
 	codes, foundCityName := FindAirportCode(cityName)
 
@@ -275,7 +289,7 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 	return true
 }
 
-// команда для списка городов (заменяет /destinations)
+// Команда для списка городов (заменяет /destinations)
 func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 	text := "🏙️ <b>Доступные города для поиска:</b>\n\n"
 	text += GetCityList()
@@ -289,4 +303,50 @@ func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "HTML"
 	b.api.Send(msg)
+}
+
+// 🆕 ДОБАВЛЕНО: справка по команде origin
+func (b *Bot) setOrigin(chatID int64, cityName string) bool {
+	codes, _ := FindOriginAirportCode(cityName)
+
+	if codes == nil {
+		msg := tgbotapi.NewMessage(chatID,
+			fmt.Sprintf("❌ <b>Город вылета '%s' не найден.</b>\n\n"+
+				"💡 <i>Используйте:</i>\n"+
+				"<code>/origin list</code> - список доступных городов\n"+
+				"<code>/origin set москва</code> - установить Москву", cityName))
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return false
+	}
+	origin := codes[0]
+	oldOrigins := make([]string, len(b.config.OriginIATA))
+	copy(oldOrigins, b.config.OriginIATA)
+	b.flightSearch.SetOriginIATA(origin)
+
+	var originInfo string
+	if len(codes) > 1 {
+		originInfo = fmt.Sprintf("\n🏢 Доступные аэропорты: %s", strings.Join(codes, ", "))
+	}
+	msg := tgbotapi.NewMessage(chatID,
+		fmt.Sprintf("✅ <b>Город вылета изменен:</b>\n%s → %s\n➡️\n%s → %s%s",
+			strings.Join(oldOrigins, "/"),
+			getCityName(b.config.DestinationIATA),
+			origin,
+			getCityName(b.config.DestinationIATA),
+			originInfo))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+	return true
+}
+
+func FindOriginAirportCode(cityName string) ([]string, string) {
+	normalized := strings.ToLower(strings.TrimSpace(cityName))
+
+	// Прямой поиск
+	if codes, exists := CityAirports[normalized]; exists {
+		return codes, getCityName(codes[0])
+	}
+	return nil, ""
+
 }
