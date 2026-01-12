@@ -174,7 +174,8 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string) []Flight {
 	var flights []Flight
 
 	for monthOffset := 0; monthOffset < fs.config.MonthsToSearch; monthOffset++ {
-		monthDate := time.Now().AddDate(0, monthOffset, 0)
+		currentYear := time.Now().Year()
+		monthDate := time.Date(currentYear, time.March, 1, 0, 0, 0, 0, time.Local)
 		monthStr := monthDate.Format("2006-01")
 
 		fmt.Printf("Проверяем %s -> %s на %s...\n", origin, fs.config.DestinationIATA, monthStr)
