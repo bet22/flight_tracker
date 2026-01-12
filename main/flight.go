@@ -257,6 +257,89 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string) []Flight {
 		time.Sleep(1 * time.Second)
 	}
 
+	for monthOffset := 0; monthOffset < fs.config.MonthsToSearch; monthOffset++ {
+		currentYear := time.Now().Year()
+		monthDate := time.Date(currentYear, time.April, 1, 0, 0, 0, 0, time.Local)
+		monthStr := monthDate.Format("2006-01")
+
+		fmt.Printf("Проверяем %s -> %s на %s...\n", origin, fs.config.DestinationIATA, monthStr)
+
+		apiURL := fs.config.TravelPayoutsUrlPrice
+
+		params := url.Values{}
+		params.Add("origin", fs.config.DestinationIATA)
+		params.Add("destination", origin)
+		params.Add("currency", "rub")
+		params.Add("departure_at", monthStr)
+		params.Add("sorting", "price")
+		params.Add("direct", "false")
+		params.Add("limit", "15")
+		params.Add("one_way", "true")
+		params.Add("token", fs.config.TravelPayoutsToken)
+
+		req, err := http.NewRequest("GET", apiURL+"?"+params.Encode(), nil)
+		if err != nil {
+			fmt.Printf("Ошибка создания запроса: %v\n", err)
+			continue
+		}
+
+		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+		req.Header.Set("Accept", "application/json")
+
+		client := &http.Client{Timeout: 30 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			fmt.Printf("Ошибка сети: %v\n", err)
+			continue
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			fmt.Printf("HTTP ошибка: %s\n", resp.Status)
+			continue
+		}
+
+		var apiResponse APIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiResponse); err != nil {
+			fmt.Printf("Ошибка парсинга JSON: %v\n", err)
+			continue
+		}
+
+		if !apiResponse.Success {
+			fmt.Printf("API ошибка: %s\n", apiResponse.Error)
+			continue
+		}
+
+		for _, flightData := range apiResponse.Data {
+			if flightData.Price > fs.config.MaxPrice {
+				continue
+			}
+			if flightData.Duration > fs.config.MaxFlightTime {
+				continue
+			}
+			departureTime, err := time.Parse(time.RFC3339, flightData.DepartureAt)
+			if err != nil {
+				fmt.Printf("Ошибка парсинга даты: %v\n", err)
+				continue
+			}
+
+			flight := Flight{
+				Origin:        flightData.Destination,
+				Destination:   origin,
+				DepartureDate: departureTime.Format("02.01.2006"),
+				DayOfWeek:     getRussianDayOfWeek(departureTime.Weekday()),
+				DepartureTime: departureTime.Format("15:04"),
+				Price:         flightData.Price,
+				Airline:       flightData.Airline,
+				Link:          "https://aviasales.ru" + flightData.Link, Duration: flightData.Duration,
+				Transfers: flightData.Transfers,
+			}
+			flights = append(flights, flight)
+		}
+
+		time.Sleep(1 * time.Second)
+	}
+
 	return flights
 }
 
