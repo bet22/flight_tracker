@@ -343,7 +343,7 @@ func (b *Bot) setOrigin(chatID int64, cityName string) bool {
 func FindOriginAirportCode(cityName string) ([]string, string) {
 	normalized := strings.ToLower(strings.TrimSpace(cityName))
 
-	// Прямой поиск
+	// Прямой поиск test
 	if codes, exists := CityAirports[normalized]; exists {
 		return codes, getCityName(codes[0])
 	}
