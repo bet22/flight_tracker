@@ -43,6 +43,7 @@ func (b *Bot) Start() {
 
 		// Проверяем права пользователя
 		if !b.isUserAllowed(update.Message.From.ID) {
+			log.Printf("Проверяем права пользователя %d", update.Message.From.ID)
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "❌ У вас нет прав для использования этого бота.")
 			b.api.Send(msg)
 			continue
@@ -66,6 +67,7 @@ func (b *Bot) Start() {
 
 func (b *Bot) isUserAllowed(userID int64) bool {
 	// Если не указаны администраторы, разрешаем всем
+	log.Printf("Запрос от %d", userID)
 	if len(b.config.AdminUsers) == 0 {
 		return true
 	}

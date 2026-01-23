@@ -164,7 +164,7 @@ func (fs *FlightSearch) Search() (string, error) {
 		arrival = append(arrival, flights...)
 	}
 
-	departure = append(arrival, fs.searchFlightsForOrigin(fs.config.DestinationIATA, 4, true)...)
+	departure = append(departure, fs.searchFlightsForOrigin(fs.config.DestinationIATA, 4, true)...)
 
 	if len(arrival) > 0 || len(departure) > 0 {
 		return fs.formatMessage(arrival, departure), nil
@@ -182,7 +182,7 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTic
 		dest = fs.config.DestinationIATA
 	}
 
-	for monthOffset := 0; monthOffset < fs.config.MonthsToSearch; monthOffset++ {
+	for monthOffset := 0; monthOffset < 1; monthOffset++ {
 		currentYear := time.Now().Year()
 		monthDate := time.Date(currentYear, time.Month(month), 1, 0, 0, 0, 0, time.Local)
 		monthStr := monthDate.Format("2006-01")
@@ -316,13 +316,13 @@ func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) stri
 		departureByOrigin[flight.Origin] = append(departureByOrigin[flight.Origin], flight)
 	}
 
-	for origin, originFlights := range departureByOrigin {
-		sort.Slice(originFlights, func(i, j int) bool {
-			return originFlights[i].Price < originFlights[j].Price
+	for origin, departureFlights := range departureByOrigin {
+		sort.Slice(departureFlights, func(i, j int) bool {
+			return departureFlights[i].Price < departureFlights[j].Price
 		})
 
 		cityName := getCityName(origin)
-		destName := getCityName(fs.config.DestinationIATA)
+		destName := getCityName(fs.config.OriginIATA[0])
 
 		sb.WriteString(fmt.Sprintf("🛫 <b>%s → %s</b>\n", cityName, destName))
 		sb.WriteString("<code>")
@@ -330,7 +330,7 @@ func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) stri
 		sb.WriteString("--------------|---------|---------|---------|------\n")
 		sb.WriteString("</code>")
 
-		for _, flight := range originFlights[:min(10, len(originFlights))] {
+		for _, flight := range departureFlights[:min(10, len(departureFlights))] {
 			transfersStr := getTransfersText(flight.Transfers)
 
 			sb.WriteString(fmt.Sprintf(
