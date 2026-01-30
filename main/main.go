@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"strconv"
 
 	"github.com/robfig/cron/v3"
 )
@@ -47,8 +46,9 @@ func startScheduledSearch(bot *Bot, config *AppConfig, flightSearch *FlightSearc
 		}
 
 		// Отправляем результат в основной чат
-		chatID, _ := strconv.ParseInt(config.TelegramChatID, 10, 64)
-		bot.SendMessage(chatID, result)
+		for _, adminID := range config.AdminUsers {
+			bot.SendMessage(adminID, result)
+		}
 	})
 
 	// Для теста: каждые 6 часов
