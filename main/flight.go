@@ -164,7 +164,7 @@ func (fs *FlightSearch) Search() (string, error) {
 		arrival = append(arrival, flights...)
 	}
 
-	departure = append(departure, fs.searchFlightsForOrigin(fs.config.DestinationIATA, 4, true)...)
+	departure = append(departure, fs.searchFlightsForOrigin(fs.config.DestinationIATA, 3, true)...)
 
 	if len(arrival) > 0 || len(departure) > 0 {
 		return fs.formatMessage(arrival, departure), nil
@@ -198,7 +198,7 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTic
 		params.Add("departure_at", monthStr)
 		params.Add("sorting", "price")
 		params.Add("direct", "false")
-		params.Add("limit", "15")
+		params.Add("limit", "30")
 		params.Add("one_way", "true")
 		params.Add("token", fs.config.TravelPayoutsToken)
 
@@ -242,6 +242,9 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTic
 			if flightData.Duration > fs.config.MaxFlightTime {
 				continue
 			}
+			if !fs.config.DateFilter.Matches(flightData.DepartureAt) {
+				continue
+			}
 			departureTime, err := time.Parse(time.RFC3339, flightData.DepartureAt)
 			if err != nil {
 				fmt.Printf("Ошибка парсинга даты: %v\n", err)
@@ -267,6 +270,41 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTic
 	}
 
 	return flights
+}
+
+func (df *DateFilter) Matches(dateStr string) bool {
+	if !df.Enabled {
+		return true
+	}
+
+	flightDate, err := time.Parse("2006-01-02", dateStr[:10])
+	if err != nil {
+		return false
+	}
+
+	switch df.Mode {
+	case "range":
+		// Проверяем, попадает ли дата в диапазон
+		if !df.StartDate.IsZero() && flightDate.Before(df.StartDate) {
+			return false
+		}
+		if !df.EndDate.IsZero() && flightDate.After(df.EndDate) {
+			return false
+		}
+		return true
+
+	case "list":
+		// Проверяем, есть ли дата в списке
+		for _, d := range df.Dates {
+			if d == dateStr[:10] {
+				return true
+			}
+		}
+		return false
+
+	default:
+		return true
+	}
 }
 
 func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) string {

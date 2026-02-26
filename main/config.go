@@ -5,6 +5,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/joho/godotenv"
 )
@@ -22,6 +23,15 @@ type AppConfig struct {
 	MaxPrice              int
 	MonthsToSearch        int
 	MaxFlightTime         int
+	DateFilter            DateFilter
+}
+
+type DateFilter struct {
+	StartDate time.Time // Начало периода
+	EndDate   time.Time // Конец периода
+	Dates     []string  // Конкретные даты (позже)
+	Enabled   bool      // Включен ли фильтр
+	Mode      string    // "range" или "list"
 }
 
 func loadConfig() (*AppConfig, error) {
@@ -40,6 +50,39 @@ func loadConfig() (*AppConfig, error) {
 		}
 	}
 
+	dateFilter := DateFilter{
+		Enabled: false,
+		Mode:    "range",
+	}
+
+	if startDateStr := getEnv("DATE_FILTER_START", ""); startDateStr != "" {
+		if startDate, err := time.Parse("2006-01-02", startDateStr); err == nil {
+			dateFilter.StartDate = startDate
+			dateFilter.Enabled = true
+		}
+	}
+
+	if endDateStr := getEnv("DATE_FILTER_END", ""); endDateStr != "" {
+		if endDate, err := time.Parse("2006-01-02", endDateStr); err == nil {
+			dateFilter.EndDate = endDate
+			dateFilter.Enabled = true
+		}
+	}
+
+	if dateListStr := getEnv("DATE_FILTER_LIST", ""); dateListStr != "" {
+		dates := strings.Split(dateListStr, ",")
+		for _, dateStr := range dates {
+			dateStr = strings.TrimSpace(dateStr)
+			if _, err := time.Parse("2006-01-02", dateStr); err == nil {
+				dateFilter.Dates = append(dateFilter.Dates, dateStr)
+			}
+		}
+		if len(dateFilter.Dates) > 0 {
+			dateFilter.Mode = "list"
+			dateFilter.Enabled = true
+		}
+	}
+
 	return &AppConfig{
 		TelegramBotUrl:        os.Getenv("TELEGRAM_BOT_URL"),
 		TelegramBotToken:      os.Getenv("TELEGRAM_BOT_TOKEN"),
@@ -52,6 +95,7 @@ func loadConfig() (*AppConfig, error) {
 		MonthsToSearch:        getEnvInt("MONTHS_TO_SEARCH", 3),
 		AdminUsers:            adminUsers,
 		MaxFlightTime:         getEnvInt("MAX_FLIGHT_TIME", 1440),
+		DateFilter:            dateFilter,
 	}, nil
 }
 
