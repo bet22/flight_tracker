@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -24,6 +25,41 @@ type AppConfig struct {
 	MonthsToSearch        int
 	MaxFlightTime         int
 	DateFilter            DateFilter
+}
+
+// Validate проверяет корректность конфигурации
+func (config *AppConfig) Validate() error {
+	var errs []string
+
+	if config.TelegramBotToken == "" {
+		errs = append(errs, "TELEGRAM_BOT_TOKEN не установлен")
+	}
+	if config.TravelPayoutsToken == "" {
+		errs = append(errs, "TRAVELPAYOUTS_TOKEN не установлен")
+	}
+	if config.TravelPayoutsUrlPrice == "" {
+		errs = append(errs, "TRAVELPAYOUTS_URL_PRICE не установлен")
+	}
+	if len(config.OriginIATA) == 0 || config.OriginIATA[0] == "" {
+		errs = append(errs, "ORIGIN_IATA не установлен")
+	}
+	if config.DestinationIATA == "" {
+		errs = append(errs, "DESTINATION_IATA не установлен")
+	}
+	if config.MaxPrice <= 0 {
+		errs = append(errs, fmt.Sprintf("MAX_PRICE должен быть > 0 (текущее: %d)", config.MaxPrice))
+	}
+	if config.MonthsToSearch <= 0 || config.MonthsToSearch > 12 {
+		errs = append(errs, fmt.Sprintf("MONTHS_TO_SEARCH должен быть от 1 до 12 (текущее: %d)", config.MonthsToSearch))
+	}
+	if config.MaxFlightTime <= 0 {
+		errs = append(errs, fmt.Sprintf("MAX_FLIGHT_TIME должен быть > 0 (текущее: %d)", config.MaxFlightTime))
+	}
+
+	if len(errs) > 0 {
+		return fmt.Errorf("Ошибка валидации конфигурации:\n  • %s", strings.Join(errs, "\n  • "))
+	}
+	return nil
 }
 
 type DateFilter struct {
