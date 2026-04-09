@@ -22,11 +22,14 @@ jobs:
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod tidy
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod verify
 
+      - name: Run Go tests
+        run: |
+          docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go test ./...
 
-#      - name: Stop and remove old container
-#        run: |
-#          docker stop my-app || true
-#          docker rm my-app || true
+      - name: Stop and remove old container
+        run: |
+          docker stop my-app || true
+          docker rm my-app || true
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v2
