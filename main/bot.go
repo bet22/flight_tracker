@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -59,6 +60,12 @@ func (b *Bot) Start() {
 			b.handleStatus(update.Message)
 		case "help", "помощь":
 			b.handleHelp(update.Message)
+		case "cities":
+			b.handleCitiesList(update.Message)
+		case "origin":
+			b.handleOrigin(update.Message)
+		case "setprice":
+			b.handleSetPrice(update.Message)
 		default:
 			b.handleUnknown(update.Message)
 		}
@@ -73,12 +80,7 @@ func (b *Bot) isUserAllowed(userID int64) bool {
 	}
 
 	// Проверяем есть ли пользователь в списке администраторов
-	for _, adminID := range b.config.AdminUsers {
-		if userID == adminID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(b.config.AdminUsers, userID)
 }
 
 func (b *Bot) handleStart(message *tgbotapi.Message) {
@@ -171,19 +173,22 @@ func (b *Bot) handleStatus(message *tgbotapi.Message) {
 func (b *Bot) handleHelp(message *tgbotapi.Message) {
 	text := `❓ <b>Помощь по боту</b>
 
-<b>Команды:</b>
+<b>Поиск:</b>
 /search - Запустить поиск билетов
+/search бангкок - Поиск в конкретный город
+/search бангкок 6 - Поиск на 6 месяцев
+
+<b>Настройки:</b>
+/setprice - Показать/изменить макс. цену
+/origin - Управление городом вылета
+/cities - Список доступных городов
+
+<b>Информация:</b>
 /status - Показать статус бота
 /help - Эта справка
 
 <b>Автоматический поиск:</b>
-Бот автоматически ищет билеты каждый день в 10:00 и присылает уведомления.
-
-<b>Ручной поиск:</b>
-Используйте команду /search в любое время для запуска поиска.
-
-<b>Настройки:</b>
-Параметры поиска задаются в конфигурации бота.`
+Бот автоматически ищет билеты каждый день в 10:00 и присылает уведомления.`
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "HTML"
@@ -218,26 +223,54 @@ func (b *Bot) setDestination(chatID int64, destination string) {
 	b.api.Send(msg)
 }
 
-func (b *Bot) setDestinationAndMonthsToSearch(chatID int64, destination string, monthsToSearch int) {
-	oldDestination := b.config.DestinationIATA
-	b.flightSearch.SetDestination(destination)
-	oldMonthsToSearch := b.config.MonthsToSearch
-	b.flightSearch.SetMonthsToSearch(monthsToSearch)
-
-	msg := tgbotapi.NewMessage(chatID,
-		fmt.Sprintf("✅ <b>Направление и глибина поиска изменены:</b>\n%s → %s\n➡️\n%s → %s</b>\n%d мес.→ %d мес.",
-			strings.Join(b.config.OriginIATA, "/"),
-			getCityName(oldDestination),
-			strings.Join(b.config.OriginIATA, "/"),
-			getCityName(destination),
-			b.config.MonthsToSearch,
-			oldMonthsToSearch))
-	msg.ParseMode = "HTML"
-	b.api.Send(msg)
-}
 func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 	text := "❓ Неизвестная команда. Используйте /help для просмотра доступных команд."
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
+	b.api.Send(msg)
+}
+
+// handleSetPrice обрабатывает команду /setprice <цена>
+func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+
+	if len(args) < 2 {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			fmt.Sprintf("💰 <b>Текущая макс. цена:</b> %d руб.\n\n"+
+				"Используйте: <code>/setprice 35000</code>", b.config.MaxPrice))
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	newPrice, err := strconv.Atoi(args[1])
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			fmt.Sprintf("❌ Неверное значение: <code>%s</code>. Введите число.", args[1]))
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	if newPrice <= 0 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Цена должна быть больше 0.")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	if newPrice > 1000000 {
+		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Цена слишком большая. Максимум: 1 000 000.")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	oldPrice := b.config.MaxPrice
+	b.flightSearch.SetMaxPrice(newPrice)
+
+	msg := tgbotapi.NewMessage(message.Chat.ID,
+		fmt.Sprintf("✅ <b>Макс. цена изменена:</b>\n%d₽ → %d₽", oldPrice, newPrice))
+	msg.ParseMode = "HTML"
 	b.api.Send(msg)
 }
 
