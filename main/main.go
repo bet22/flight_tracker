@@ -3,6 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/robfig/cron/v3"
 )
@@ -12,6 +15,11 @@ func main() {
 	config, err := loadConfig()
 	if err != nil {
 		log.Fatalf("Ошибка загрузки конфигурации: %v", err)
+	}
+
+	// Валидируем конфигурацию
+	if err := config.Validate(); err != nil {
+		log.Fatalf("%v", err)
 	}
 
 	fmt.Println("🚀 Запускаем трекер авиабилетов с Telegram ботом...")
@@ -26,18 +34,29 @@ func main() {
 	}
 
 	// Запускаем автоматический поиск по расписанию
-	go startScheduledSearch(bot, config, flightSearch)
+	cronStop := startScheduledSearch(bot, config, flightSearch)
+
+	// Graceful shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+
+	go func() {
+		<-quit
+		Logger.Info("Получен сигнал завершения, останавливаем...")
+		cronStop()
+		os.Exit(0)
+	}()
 
 	// Запускаем бота (блокирующая операция)
 	bot.Start()
 }
 
-func startScheduledSearch(bot *Bot, config *AppConfig, flightSearch *FlightSearch) {
+func startScheduledSearch(bot *Bot, config *AppConfig, flightSearch *FlightSearch) func() {
 	c := cron.New()
 
 	// Автоматический поиск каждый день в 10:00
-	c.AddFunc("0 10 * * *", func() {
-		log.Println("🕙 Запуск автоматического поиска по расписанию...")
+	_, err := c.AddFunc("0 10 * * *", func() {
+		Logger.Info("Запуск автоматического поиска по расписанию")
 
 		result, err := flightSearch.Search()
 		if err != nil {
@@ -45,14 +64,19 @@ func startScheduledSearch(bot *Bot, config *AppConfig, flightSearch *FlightSearc
 			return
 		}
 
-		// Отправляем результат в основной чат
+		// Отправляем результат администраторам
 		for _, adminID := range config.AdminUsers {
 			bot.SendMessage(adminID, result)
 		}
 	})
-
-	// Для теста: каждые 6 часов
+	if err != nil {
+		log.Printf("📅 Ошибка добавления cron задачи: %v", err)
+	}
 
 	c.Start()
 	log.Println("📅 Планировщик запущен")
+
+	return func() {
+		c.Stop().Done()
+	}
 }

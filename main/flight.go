@@ -113,6 +113,10 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int
 	var flights []Flight
 	var dest string
 	if backTicket {
+		if len(fs.config.OriginIATA) == 0 {
+			fmt.Printf("Пустой OriginIATA. Невозможно найти обратный билет")
+			return nil
+		}
 		dest = fs.config.OriginIATA[0]
 	} else {
 		dest = fs.config.DestinationIATA
