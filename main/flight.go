@@ -91,11 +91,13 @@ func (fs *FlightSearch) Search() (string, error) {
 	var departure []Flight
 
 	for _, origin := range fs.config.OriginIATA {
-		flights := fs.searchFlightsForOrigin(origin, 3, false)
+		flights := fs.searchFlightsForOrigin(origin, fs.config.MonthsToSearch, false)
 		arrival = append(arrival, flights...)
 	}
 
-	departure = append(departure, fs.searchFlightsForOrigin(fs.config.DestinationIATA, 3, true)...)
+	if len(fs.config.OriginIATA) > 0 {
+		departure = append(departure, fs.searchFlightsForOrigin(fs.config.DestinationIATA, fs.config.MonthsToSearch, true)...)
+	}
 
 	if len(arrival) > 0 || len(departure) > 0 {
 		return fs.formatMessage(arrival, departure), nil
@@ -104,7 +106,10 @@ func (fs *FlightSearch) Search() (string, error) {
 	return "ℹ️ Дешёвых билетов не найдено.", nil
 }
 
-func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTicket bool) []Flight {
+// httpClient переиспользуется для всех запросов
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int, backTicket bool) []Flight {
 	var flights []Flight
 	var dest string
 	if backTicket {
@@ -113,9 +118,9 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTic
 		dest = fs.config.DestinationIATA
 	}
 
-	for monthOffset := 0; monthOffset < 1; monthOffset++ {
-		currentYear := time.Now().Year()
-		monthDate := time.Date(currentYear, time.Month(month), 1, 0, 0, 0, 0, time.Local)
+	now := time.Now()
+	for monthOffset := 0; monthOffset < monthsToSearch; monthOffset++ {
+		monthDate := now.AddDate(0, monthOffset, 0)
 		monthStr := monthDate.Format("2006-01")
 
 		fmt.Printf("Проверяем %s -> %s на %s...\n", origin, dest, monthStr)
@@ -142,8 +147,7 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, month int, backTic
 		req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
 		req.Header.Set("Accept", "application/json")
 
-		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Do(req)
+		resp, err := httpClient.Do(req)
 		if err != nil {
 			fmt.Printf("Ошибка сети: %v\n", err)
 			continue
@@ -243,18 +247,41 @@ func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) stri
 
 	sb.WriteString("✈️ <b>НАЙДЕНЫ ДЕШЁВЫЕ БИЛЕТЫ!</b>\n\n")
 
-	arrivalByOrigin := make(map[string][]Flight)
-	for _, flight := range arrival {
-		arrivalByOrigin[flight.Origin] = append(arrivalByOrigin[flight.Origin], flight)
+	fs.formatFlightGroup(&sb, "arrival", arrival, fs.config.DestinationIATA)
+	fs.formatFlightGroup(&sb, "departure", departure, fs.config.OriginIATA[0])
+
+	sb.WriteString("📊 <b>Информация:</b>\n")
+	sb.WriteString("   • 🎫 - ссылка на покупку\n")
+
+	return sb.String()
+}
+
+// formatFlightGroup форматирует группу рейсов (прилёт или вылет)
+func (fs *FlightSearch) formatFlightGroup(sb *strings.Builder, groupType string, flights []Flight, returnDestination string) {
+	if len(flights) == 0 {
+		return
 	}
 
-	for origin, originFlights := range arrivalByOrigin {
+	byOrigin := make(map[string][]Flight)
+	for _, flight := range flights {
+		byOrigin[flight.Origin] = append(byOrigin[flight.Origin], flight)
+	}
+
+	// Сортируем origins для стабильного вывода
+	var origins []string
+	for origin := range byOrigin {
+		origins = append(origins, origin)
+	}
+	sort.Strings(origins)
+
+	for _, origin := range origins {
+		originFlights := byOrigin[origin]
 		sort.Slice(originFlights, func(i, j int) bool {
 			return originFlights[i].Price < originFlights[j].Price
 		})
 
 		cityName := getCityName(origin)
-		destName := getCityName(fs.config.DestinationIATA)
+		destName := getCityName(returnDestination)
 
 		sb.WriteString(fmt.Sprintf("🛫 <b>%s → %s</b>\n", cityName, destName))
 		sb.WriteString("<code>")
@@ -278,48 +305,6 @@ func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) stri
 		}
 		sb.WriteString("\n")
 	}
-
-	//todo дубликат код вынеси в отдельный метод
-	departureByOrigin := make(map[string][]Flight)
-	for _, flight := range departure {
-		departureByOrigin[flight.Origin] = append(departureByOrigin[flight.Origin], flight)
-	}
-
-	for origin, departureFlights := range departureByOrigin {
-		sort.Slice(departureFlights, func(i, j int) bool {
-			return departureFlights[i].Price < departureFlights[j].Price
-		})
-
-		cityName := getCityName(origin)
-		destName := getCityName(fs.config.OriginIATA[0])
-
-		sb.WriteString(fmt.Sprintf("🛫 <b>%s → %s</b>\n", cityName, destName))
-		sb.WriteString("<code>")
-		sb.WriteString("Дата          | Цена    | Время   | Пересад | Рейс\n")
-		sb.WriteString("--------------|---------|---------|---------|------\n")
-		sb.WriteString("</code>")
-
-		for _, flight := range departureFlights[:min(10, len(departureFlights))] {
-			transfersStr := getTransfersText(flight.Transfers)
-
-			sb.WriteString(fmt.Sprintf(
-				"<code>%s %s | %6d₽ | %s | %7s | %s</code> ",
-				flight.DepartureDate,
-				flight.DayOfWeek,
-				flight.Price,
-				formatDuration(flight.Duration),
-				transfersStr,
-				flight.Airline,
-			))
-			sb.WriteString(fmt.Sprintf("<a href='%s'>🎫</a>\n", flight.Link))
-		}
-		sb.WriteString("\n")
-	}
-
-	sb.WriteString("📊 <b>Информация:</b>\n")
-	sb.WriteString("   • 🎫 - ссылка на покупку\n")
-
-	return sb.String()
 }
 
 // Вспомогательные функции

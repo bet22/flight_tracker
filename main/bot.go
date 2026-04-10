@@ -104,25 +104,34 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 func (b *Bot) handleSearch(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
 
-	// 🆕 Если указано направление как второй параметр
+	monthsToSearch := b.config.MonthsToSearch
+
+	// Если указано направление как второй параметр
 	if len(args) >= 2 {
+		destination := strings.ToUpper(args[1])
+
 		if len(args) >= 3 {
-			destination := strings.ToUpper(args[1])
-
-			monthsToSearch, err := strconv.Atoi(args[2])
+			var err error
+			monthsToSearch, err = strconv.Atoi(args[2])
 			if err != nil {
-
+				msg := tgbotapi.NewMessage(message.Chat.ID,
+					fmt.Sprintf("❌ Неверное количество месяцев: <code>%s</code>. Введите число от 1 до 12.", args[2]))
+				msg.ParseMode = "HTML"
+				b.api.Send(msg)
+				return
 			}
-			success := b.setDestinationByCityName(message.Chat.ID, destination, monthsToSearch)
-			if !success {
-				return // 🆕 Если город не найден, выходим
+			if monthsToSearch < 1 || monthsToSearch > 12 {
+				msg := tgbotapi.NewMessage(message.Chat.ID,
+					"❌ Количество месяцев должно быть от 1 до 12.")
+				msg.ParseMode = "HTML"
+				b.api.Send(msg)
+				return
 			}
+		}
 
-			//b.setDestinationAndMonthsToSearch(message.Chat.ID, destination, monthsToSearch)
-		} else {
-			destination := strings.ToUpper(args[1])
-			b.setDestinationByCityName(message.Chat.ID, destination, b.config.MonthsToSearch)
-			//b.setDestination(message.Chat.ID, destination)
+		success := b.setDestinationByCityName(message.Chat.ID, destination, monthsToSearch)
+		if !success {
+			return
 		}
 	}
 
