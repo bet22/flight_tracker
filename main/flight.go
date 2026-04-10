@@ -383,3 +383,89 @@ func (fs *FlightSearch) SetOriginIATA(origin string) {
 func (fs *FlightSearch) SetMaxPrice(price int) {
 	fs.config.MaxPrice = price
 }
+
+func (fs *FlightSearch) SetDateRange(startDate, endDate time.Time) {
+	fs.config.DateFilter = DateFilter{
+		Enabled:   true,
+		Mode:      "range",
+		StartDate: startDate,
+		EndDate:   endDate,
+		Dates:     nil,
+	}
+}
+
+func (fs *FlightSearch) AddDateToDate(dateStr string) {
+	date, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		return
+	}
+	if fs.config.DateFilter.Mode != "list" {
+		fs.config.DateFilter = DateFilter{
+			Enabled: true,
+			Mode:    "list",
+			Dates:   []string{},
+		}
+	}
+	for _, d := range fs.config.DateFilter.Dates {
+		if d == dateStr {
+			return
+		}
+	}
+	fs.config.DateFilter.Dates = append(fs.config.DateFilter.Dates, dateStr)
+	fs.config.DateFilter.StartDate = time.Time{}
+	fs.config.DateFilter.EndDate = time.Time{}
+	_ = date
+}
+
+func (fs *FlightSearch) RemoveDateFromDate(dateStr string) bool {
+	if fs.config.DateFilter.Mode != "list" {
+		return false
+	}
+	for i, d := range fs.config.DateFilter.Dates {
+		if d == dateStr {
+			fs.config.DateFilter.Dates = append(fs.config.DateFilter.Dates[:i], fs.config.DateFilter.Dates[i+1:]...)
+			if len(fs.config.DateFilter.Dates) == 0 {
+				fs.config.DateFilter.Enabled = false
+			}
+			return true
+		}
+	}
+	return false
+}
+
+func (fs *FlightSearch) ClearDateFilter() {
+	fs.config.DateFilter.Dates = nil
+	fs.config.DateFilter.StartDate = time.Time{}
+	fs.config.DateFilter.EndDate = time.Time{}
+	fs.config.DateFilter.Enabled = false
+	fs.config.DateFilter.Mode = ""
+}
+
+func (fs *FlightSearch) DisableDateFilter() {
+	fs.config.DateFilter.Enabled = false
+}
+
+func (fs *FlightSearch) GetDateFilterInfo() string {
+	if !fs.config.DateFilter.Enabled {
+		return "❌ <b>Фильтр дат:</b> отключен\nПоиск по всем датам."
+	}
+
+	switch fs.config.DateFilter.Mode {
+	case "range":
+		return fmt.Sprintf("📅 <b>Фильтр дат:</b> диапазон\n   с <code>%s</code> по <code>%s</code>",
+			fs.config.DateFilter.StartDate.Format("02.01.2006"),
+			fs.config.DateFilter.EndDate.Format("02.01.2006"))
+	case "list":
+		if len(fs.config.DateFilter.Dates) == 0 {
+			return "❌ <b>Фильтр дат:</b> пустой список"
+		}
+		datesStr := ""
+		for _, d := range fs.config.DateFilter.Dates {
+			t, _ := time.Parse("2006-01-02", d)
+			datesStr += fmt.Sprintf("\n   • <code>%s</code> (%s)", d, getRussianDayOfWeek(t.Weekday()))
+		}
+		return fmt.Sprintf("📋 <b>Фильтр дат:</b> конкретные даты%s", datesStr)
+	default:
+		return "❓ <b>Фильтр дат:</b> неизвестный режим"
+	}
+}

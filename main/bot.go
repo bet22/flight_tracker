@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -66,6 +67,8 @@ func (b *Bot) Start() {
 			b.handleOrigin(update.Message)
 		case "setprice":
 			b.handleSetPrice(update.Message)
+		case "datefilter", "df":
+			b.handleDateFilter(update.Message)
 		default:
 			b.handleUnknown(update.Message)
 		}
@@ -165,13 +168,18 @@ func (b *Bot) handleStatus(message *tgbotapi.Message) {
 <b>Параметры:</b>
 • Макс. цена: %d руб.
 • Глубина поиска: %d месяцев
+• Макс. время полёта: %d мин.
 • Авто-поиск: каждый день в 10:00
+
+%s
 
 Бот работает в штатном режиме 🟢`,
 		strings.Join(b.config.OriginIATA, "/"),
 		b.config.DestinationIATA,
 		b.config.MaxPrice,
 		b.config.MonthsToSearch,
+		b.config.MaxFlightTime,
+		b.flightSearch.GetDateFilterInfo(),
 	)
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
@@ -191,6 +199,14 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 /setprice - Показать/изменить макс. цену
 /origin - Управление городом вылета
 /cities - Список доступных городов
+
+<b>Фильтр дат:</b>
+/datefilter - Показать текущий фильтр дат
+/datefilter set 2024-06-01 2024-06-15 - Установить диапазон
+/datefilter add 2024-06-15 - Добавить дату в список
+/datefilter remove 2024-06-15 - Удалить дату из списка
+/datefilter clear - Очистить фильтр дат
+/datefilter disable - Отключить фильтр дат
 
 <b>Информация:</b>
 /status - Показать статус бота
@@ -393,4 +409,170 @@ func FindOriginAirportCode(cityName string) ([]string, string) {
 	}
 	return nil, ""
 
+}
+
+// handleDateFilter обрабатывает команду /datefilter и его подкоманды
+func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+
+	if len(args) < 2 {
+		b.sendDateFilterStatus(message.Chat.ID)
+		return
+	}
+
+	subcommand := strings.ToLower(args[1])
+
+	switch subcommand {
+	case "set", "диапазон":
+		b.handleDateFilterSet(message, args)
+	case "add", "добавить":
+		b.handleDateFilterAdd(message, args)
+	case "remove", "удалить":
+		b.handleDateFilterRemove(message, args)
+	case "clear", "очистить":
+		b.handleDateFilterClear(message)
+	case "disable", "отключить":
+		b.handleDateFilterDisable(message)
+	case "list", "список":
+		b.sendDateFilterStatus(message.Chat.ID)
+	default:
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"❓ Неизвестная подкоманда. Используйте:\n"+
+				"<code>/datefilter</code> - показать текущий фильтр\n"+
+				"<code>/datefilter set 2024-06-01 2024-06-15</code> - установить диапазон\n"+
+				"<code>/datefilter add 2024-06-01</code> - добавить дату в список\n"+
+				"<code>/datefilter remove 2024-06-01</code> - удалить дату из списка\n"+
+				"<code>/datefilter clear</code> - очистить фильтр\n"+
+				"<code>/datefilter disable</code> - отключить фильтр")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+	}
+}
+
+func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
+	if len(args) < 4 {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"📅 <b>Установка диапазона дат</b>\n\n"+
+				"Используйте: <code>/datefilter set ГГГГ-ММ-ДД ГГГГ-ММ-ДД</code>\n\n"+
+				"Пример: <code>/datefilter set 2024-06-01 2024-06-15</code>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	startDate, err1 := time.Parse("2006-01-02", args[2])
+	endDate, err2 := time.Parse("2006-01-02", args[3])
+
+	if err1 != nil || err2 != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"❌ <b>Неверный формат дат.</b>\n\n"+
+				"Используйте формат <code>ГГГГ-ММ-ДД</code>\n\n"+
+				"Пример: <code>/datefilter set 2024-06-01 2024-06-15</code>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	if endDate.Before(startDate) {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"❌ <b>Дата окончания раньше даты начала.</b>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	b.flightSearch.SetDateRange(startDate, endDate)
+
+	msg := tgbotapi.NewMessage(message.Chat.ID,
+		fmt.Sprintf("✅ <b>Диапазон дат установлен:</b>\n📅 с <code>%s</code> по <code>%s</code>",
+			startDate.Format("02.01.2006"),
+			endDate.Format("02.01.2006")))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
+
+func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
+	if len(args) < 3 {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"📋 <b>Добавление даты в список</b>\n\n"+
+				"Используйте: <code>/datefilter add ГГГГ-ММ-ДД</code>\n\n"+
+				"Пример: <code>/datefilter add 2024-06-15</code>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	dateStr := args[2]
+	_, err := time.Parse("2006-01-02", dateStr)
+	if err != nil {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"❌ <b>Неверный формат даты.</b>\n\n"+
+				"Используйте формат <code>ГГГГ-ММ-ДД</code>\n\n"+
+				"Пример: <code>/datefilter add 2024-06-15</code>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	b.flightSearch.AddDateToDate(dateStr)
+
+	t, _ := time.Parse("2006-01-02", dateStr)
+	msg := tgbotapi.NewMessage(message.Chat.ID,
+		fmt.Sprintf("✅ <b>Дата добавлена:</b> <code>%s</code> (%s)",
+			dateStr, getRussianDayOfWeek(t.Weekday())))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
+
+func (b *Bot) handleDateFilterRemove(message *tgbotapi.Message, args []string) {
+	if len(args) < 3 {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			"🗑️ <b>Удаление даты из списка</b>\n\n"+
+				"Используйте: <code>/datefilter remove ГГГГ-ММ-ДД</code>\n\n"+
+				"Пример: <code>/datefilter remove 2024-06-15</code>")
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	dateStr := args[2]
+	success := b.flightSearch.RemoveDateFromDate(dateStr)
+
+	if !success {
+		msg := tgbotapi.NewMessage(message.Chat.ID,
+			fmt.Sprintf("❌ <b>Дата <code>%s</code> не найдена в списке.</b>", dateStr))
+		msg.ParseMode = "HTML"
+		b.api.Send(msg)
+		return
+	}
+
+	msg := tgbotapi.NewMessage(message.Chat.ID,
+		fmt.Sprintf("🗑️ <b>Дата удалена:</b> <code>%s</code>", dateStr))
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
+
+func (b *Bot) handleDateFilterClear(message *tgbotapi.Message) {
+	b.flightSearch.ClearDateFilter()
+
+	msg := tgbotapi.NewMessage(message.Chat.ID,
+		"🧹 <b>Фильтр дат очищен.</b>\nТеперь поиск идёт по всем датам.")
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
+
+func (b *Bot) handleDateFilterDisable(message *tgbotapi.Message) {
+	b.flightSearch.DisableDateFilter()
+
+	msg := tgbotapi.NewMessage(message.Chat.ID,
+		"⏹️ <b>Фильтр дат отключён.</b>\nТеперь поиск идёт по всем датам.")
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
+}
+
+func (b *Bot) sendDateFilterStatus(chatID int64) {
+	info := b.flightSearch.GetDateFilterInfo()
+	msg := tgbotapi.NewMessage(chatID, info)
+	msg.ParseMode = "HTML"
+	b.api.Send(msg)
 }
