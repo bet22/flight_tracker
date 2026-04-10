@@ -42,7 +42,7 @@ func main() {
 
 	go func() {
 		<-quit
-		Logger.Info("Получен сигнал завершения, останавливаем...")
+		log.Printf("Получен сигнал завершения, останавливаем...")
 		cronStop()
 		os.Exit(0)
 	}()
@@ -56,7 +56,7 @@ func startScheduledSearch(bot *Bot, config *AppConfig, flightSearch *FlightSearc
 
 	// Автоматический поиск каждый день в 10:00
 	_, err := c.AddFunc("0 10 * * *", func() {
-		Logger.Info("Запуск автоматического поиска по расписанию")
+		log.Printf("Запуск автоматического поиска по расписанию")
 
 		result, err := flightSearch.Search()
 		if err != nil {
