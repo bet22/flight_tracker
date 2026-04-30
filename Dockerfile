@@ -2,14 +2,12 @@ FROM golang:1.21-alpine AS builder
 
 WORKDIR /app
 
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    go mod download
-
 # Сначала копируем только файлы модулей
 COPY go.mod go.sum ./
 
-
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    go mod download
 
 # Затем копируем весь код и собираем
 COPY main/*.go ./
