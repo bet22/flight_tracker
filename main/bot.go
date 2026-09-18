@@ -145,18 +145,24 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 
 	// Выполняем поиск
 	result, err := b.flightSearch.Search()
+	fmt.Printf("\n%s Подготовленный результат\n %s\n", time.Now().Format("2006-01-02 15:04"), result)
 	if err != nil {
 		errorMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("❌ <b>Ошибка при поиске:</b>\n<code>%v</code>", err))
 		errorMsg.ParseMode = "HTML"
-		b.api.Send(errorMsg)
-		return
+		_, errSend := b.api.Send(errorMsg)
+		if errSend != nil {
+			log.Fatalf("Ошибка отправки: %v", err)
+		}
 	}
 
 	// Отправляем результат
 	response := tgbotapi.NewMessage(message.Chat.ID, result)
 	response.ParseMode = "HTML"
 	response.DisableWebPagePreview = true
-	b.api.Send(response)
+	_, errSend := b.api.Send(response)
+	if errSend != nil {
+		log.Fatalf("Ошибка отправки: %v", err)
+	}
 }
 
 func (b *Bot) handleStatus(message *tgbotapi.Message) {
