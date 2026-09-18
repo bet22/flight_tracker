@@ -100,9 +100,10 @@ func (fs *FlightSearch) Search() (string, error) {
 	}
 
 	if len(arrival) > 0 || len(departure) > 0 {
+		fmt.Printf("Найдено %d билетов ", len(arrival))
 		return fs.formatMessage(arrival, departure), nil
 	}
-
+	fmt.Printf("Дешёвых билетов не найдено")
 	return "ℹ️ Дешёвых билетов не найдено.", nil
 }
 
@@ -110,6 +111,7 @@ func (fs *FlightSearch) Search() (string, error) {
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
 func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int, backTicket bool) []Flight {
+	fmt.Printf("Start method searchFlightsForOrigin")
 	var flights []Flight
 	var dest string
 	if backTicket {
@@ -207,7 +209,7 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int
 
 		time.Sleep(1 * time.Second)
 	}
-
+	fmt.Printf("Finish method searchFlightsForOrigin")
 	return flights
 }
 
