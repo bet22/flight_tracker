@@ -5,12 +5,19 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/robfig/cron/v3"
 )
 
 func main() {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("PANIC: %v\n", r)
+			fmt.Printf("Stack:\n%s\n", debug.Stack())
+		}
+	}()
 	// Загружаем конфигурацию
 	config, err := loadConfig()
 	if err != nil {
