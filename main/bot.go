@@ -47,7 +47,7 @@ func (b *Bot) Start() {
 		if !b.isUserAllowed(update.Message.From.ID) {
 			log.Printf("Проверяем права пользователя %d", update.Message.From.ID)
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "❌ У вас нет прав для использования этого бота.")
-			b.api.Send(msg)
+			sendMessage(b, msg)
 			continue
 		}
 
@@ -101,7 +101,7 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleSearch(message *tgbotapi.Message) {
@@ -120,14 +120,14 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 				msg := tgbotapi.NewMessage(message.Chat.ID,
 					fmt.Sprintf("❌ Неверное количество месяцев: <code>%s</code>. Введите число от 1 до 12.", args[2]))
 				msg.ParseMode = "HTML"
-				b.api.Send(msg)
+				sendMessage(b, msg)
 				return
 			}
 			if monthsToSearch < 1 || monthsToSearch > 12 {
 				msg := tgbotapi.NewMessage(message.Chat.ID,
 					"❌ Количество месяцев должно быть от 1 до 12.")
 				msg.ParseMode = "HTML"
-				b.api.Send(msg)
+				sendMessage(b, msg)
 				return
 			}
 		}
@@ -141,7 +141,7 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 	// Отправляем сообщение о начале поиска
 	msg := tgbotapi.NewMessage(message.Chat.ID, "🔍 <b>Начинаю поиск билетов...</b>\nЭто займет несколько секунд.")
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 
 	// Выполняем поиск
 	result, err := b.flightSearch.Search()
@@ -149,19 +149,20 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 	if err != nil {
 		errorMsg := tgbotapi.NewMessage(message.Chat.ID, fmt.Sprintf("❌ <b>Ошибка при поиске:</b>\n<code>%v</code>", err))
 		errorMsg.ParseMode = "HTML"
-		_, errSend := b.api.Send(errorMsg)
-		if errSend != nil {
-			log.Fatalf("Ошибка отправки: %v", err)
-		}
+		sendMessage(b, errorMsg)
 	}
 
 	// Отправляем результат
 	response := tgbotapi.NewMessage(message.Chat.ID, result)
 	response.ParseMode = "HTML"
 	response.DisableWebPagePreview = true
-	_, errSend := b.api.Send(response)
+	sendMessage(b, response)
+}
+
+func sendMessage(b *Bot, msg tgbotapi.MessageConfig) {
+	_, errSend := b.api.Send(msg)
 	if errSend != nil {
-		log.Fatalf("Ошибка отправки: %v", err)
+		log.Fatalf("Ошибка отправки: %v", errSend)
 	}
 }
 
@@ -190,7 +191,7 @@ func (b *Bot) handleStatus(message *tgbotapi.Message) {
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleHelp(message *tgbotapi.Message) {
@@ -223,7 +224,7 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleOrigin(message *tgbotapi.Message) {
@@ -233,7 +234,7 @@ func (b *Bot) handleOrigin(message *tgbotapi.Message) {
 		msg := tgbotapi.NewMessage(message.Chat.ID,
 			"❌ Укажите город вылета. Например: <code>/origin set москва</code>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 	cityName := strings.Join(args[2:], " ")
@@ -251,13 +252,13 @@ func (b *Bot) setDestination(chatID int64, destination string) {
 			strings.Join(b.config.OriginIATA, "/"),
 			getCityName(destination)))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 	text := "❓ Неизвестная команда. Используйте /help для просмотра доступных команд."
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 // handleSetPrice обрабатывает команду /setprice <цена>
@@ -269,7 +270,7 @@ func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
 			fmt.Sprintf("💰 <b>Текущая макс. цена:</b> %d руб.\n\n"+
 				"Используйте: <code>/setprice 35000</code>", b.config.MaxPrice))
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -278,21 +279,21 @@ func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
 		msg := tgbotapi.NewMessage(message.Chat.ID,
 			fmt.Sprintf("❌ Неверное значение: <code>%s</code>. Введите число.", args[1]))
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
 	if newPrice <= 0 {
 		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Цена должна быть больше 0.")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
 	if newPrice > 1000000 {
 		msg := tgbotapi.NewMessage(message.Chat.ID, "❌ Цена слишком большая. Максимум: 1 000 000.")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -302,7 +303,7 @@ func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
 	msg := tgbotapi.NewMessage(message.Chat.ID,
 		fmt.Sprintf("✅ <b>Макс. цена изменена:</b>\n%d₽ → %d₽", oldPrice, newPrice))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 // SendMessage отправляет сообщение в указанный чат
@@ -311,7 +312,7 @@ func (b *Bot) SendMessage(chatID int64, text string) {
 	msg.ParseMode = "HTML"
 	msg.DisableWebPagePreview = true
 	msg.DisableNotification = true
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 // Установка направления по названию города
@@ -327,7 +328,7 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 				"<code>/search BKK</code> - поиск по коду аэропорта\n"+
 				"<code>/cities</code> - список доступных городов", cityName))
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return false
 	}
 
@@ -351,7 +352,7 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 			foundCityName,
 			airportInfo))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 	return true
 }
 
@@ -368,7 +369,7 @@ func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 
 	msg := tgbotapi.NewMessage(message.Chat.ID, text)
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 // 🆕 ДОБАВЛЕНО: справка по команде origin
@@ -382,7 +383,7 @@ func (b *Bot) setOrigin(chatID int64, cityName string) bool {
 				"<code>/origin list</code> - список доступных городов\n"+
 				"<code>/origin set москва</code> - установить Москву", cityName))
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return false
 	}
 	origin := codes[0]
@@ -402,7 +403,7 @@ func (b *Bot) setOrigin(chatID int64, cityName string) bool {
 			getCityName(b.config.DestinationIATA),
 			originInfo))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 	return true
 }
 
@@ -451,7 +452,7 @@ func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
 				"<code>/datefilter clear</code> - очистить фильтр\n"+
 				"<code>/datefilter disable</code> - отключить фильтр")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 	}
 }
 
@@ -462,7 +463,7 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 				"Используйте: <code>/datefilter set ГГГГ-ММ-ДД ГГГГ-ММ-ДД</code>\n\n"+
 				"Пример: <code>/datefilter set 2024-06-01 2024-06-15</code>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -475,7 +476,7 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 				"Используйте формат <code>ГГГГ-ММ-ДД</code>\n\n"+
 				"Пример: <code>/datefilter set 2024-06-01 2024-06-15</code>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -483,7 +484,7 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 		msg := tgbotapi.NewMessage(message.Chat.ID,
 			"❌ <b>Дата окончания раньше даты начала.</b>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -494,7 +495,7 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 			startDate.Format("02.01.2006"),
 			endDate.Format("02.01.2006")))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
@@ -504,7 +505,7 @@ func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
 				"Используйте: <code>/datefilter add ГГГГ-ММ-ДД</code>\n\n"+
 				"Пример: <code>/datefilter add 2024-06-15</code>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -516,7 +517,7 @@ func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
 				"Используйте формат <code>ГГГГ-ММ-ДД</code>\n\n"+
 				"Пример: <code>/datefilter add 2024-06-15</code>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -527,7 +528,7 @@ func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
 		fmt.Sprintf("✅ <b>Дата добавлена:</b> <code>%s</code> (%s)",
 			dateStr, getRussianDayOfWeek(t.Weekday())))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleDateFilterRemove(message *tgbotapi.Message, args []string) {
@@ -537,7 +538,7 @@ func (b *Bot) handleDateFilterRemove(message *tgbotapi.Message, args []string) {
 				"Используйте: <code>/datefilter remove ГГГГ-ММ-ДД</code>\n\n"+
 				"Пример: <code>/datefilter remove 2024-06-15</code>")
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
@@ -548,14 +549,14 @@ func (b *Bot) handleDateFilterRemove(message *tgbotapi.Message, args []string) {
 		msg := tgbotapi.NewMessage(message.Chat.ID,
 			fmt.Sprintf("❌ <b>Дата <code>%s</code> не найдена в списке.</b>", dateStr))
 		msg.ParseMode = "HTML"
-		b.api.Send(msg)
+		sendMessage(b, msg)
 		return
 	}
 
 	msg := tgbotapi.NewMessage(message.Chat.ID,
 		fmt.Sprintf("🗑️ <b>Дата удалена:</b> <code>%s</code>", dateStr))
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleDateFilterClear(message *tgbotapi.Message) {
@@ -564,7 +565,7 @@ func (b *Bot) handleDateFilterClear(message *tgbotapi.Message) {
 	msg := tgbotapi.NewMessage(message.Chat.ID,
 		"🧹 <b>Фильтр дат очищен.</b>\nТеперь поиск идёт по всем датам.")
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) handleDateFilterDisable(message *tgbotapi.Message) {
@@ -573,12 +574,12 @@ func (b *Bot) handleDateFilterDisable(message *tgbotapi.Message) {
 	msg := tgbotapi.NewMessage(message.Chat.ID,
 		"⏹️ <b>Фильтр дат отключён.</b>\nТеперь поиск идёт по всем датам.")
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }
 
 func (b *Bot) sendDateFilterStatus(chatID int64) {
 	info := b.flightSearch.GetDateFilterInfo()
 	msg := tgbotapi.NewMessage(chatID, info)
 	msg.ParseMode = "HTML"
-	b.api.Send(msg)
+	sendMessage(b, msg)
 }

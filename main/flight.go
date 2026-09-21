@@ -253,8 +253,8 @@ func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) stri
 
 	sb.WriteString("✈️ <b>НАЙДЕНЫ ДЕШЁВЫЕ БИЛЕТЫ!</b>\n\n")
 
-	fs.formatFlightGroup(&sb, "arrival", arrival, fs.config.DestinationIATA)
-	fs.formatFlightGroup(&sb, "departure", departure, fs.config.OriginIATA[0])
+	fs.formatFlightGroup(&sb, arrival, fs.config.DestinationIATA)
+	fs.formatFlightGroup(&sb, departure, fs.config.OriginIATA[0])
 
 	sb.WriteString("📊 <b>Информация:</b>\n")
 	sb.WriteString("   • 🎫 - ссылка на покупку\n")
@@ -263,7 +263,7 @@ func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) stri
 }
 
 // formatFlightGroup форматирует группу рейсов (прилёт или вылет)
-func (fs *FlightSearch) formatFlightGroup(sb *strings.Builder, groupType string, flights []Flight, returnDestination string) {
+func (fs *FlightSearch) formatFlightGroup(sb *strings.Builder, flights []Flight, returnDestination string) {
 	if len(flights) == 0 {
 		return
 	}
@@ -295,7 +295,7 @@ func (fs *FlightSearch) formatFlightGroup(sb *strings.Builder, groupType string,
 		sb.WriteString("--------------|---------|---------|---------|------\n")
 		sb.WriteString("</code>")
 
-		for _, flight := range originFlights[:min(10, len(originFlights))] {
+		for _, flight := range originFlights[:minPrice(10, len(originFlights))] {
 			transfersStr := getTransfersText(flight.Transfers)
 
 			sb.WriteString(fmt.Sprintf(
@@ -358,7 +358,7 @@ func getTransfersText(transfers int) string {
 	}
 }
 
-func min(a, b int) int {
+func minPrice(a, b int) int {
 	if a < b {
 		return a
 	}
