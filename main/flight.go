@@ -209,7 +209,7 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int
 
 		time.Sleep(1 * time.Second)
 	}
-	fmt.Printf("\n%s Finish method searchFlightsForOrigin\n", time.Now().Format("2006-01-02 15:04"))
+	fmt.Printf("%s Finish method searchFlightsForOrigin\n", time.Now().Format("2006-01-02 15:04"))
 	return flights
 }
 
@@ -295,7 +295,7 @@ func (fs *FlightSearch) formatFlightGroup(sb *strings.Builder, flights []Flight,
 		sb.WriteString("--------------|---------|---------|---------|------\n")
 		sb.WriteString("</code>")
 
-		for _, flight := range originFlights[:minPrice(10, len(originFlights))] {
+		for _, flight := range originFlights[:minPrice(8, len(originFlights))] {
 			transfersStr := getTransfersText(flight.Transfers)
 
 			sb.WriteString(fmt.Sprintf(
