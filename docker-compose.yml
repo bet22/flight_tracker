@@ -2,7 +2,7 @@ services:
   app:
     build: .
     env_file: /opt/flight_tracker/config/.env
-#    ports:
+    #    ports:
 #      - "8080:8080"
 #    restart: unless-stopped
 #    environment:
