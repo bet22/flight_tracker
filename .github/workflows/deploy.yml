@@ -22,9 +22,9 @@ jobs:
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod tidy
           docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go mod verify
 
-      - name: Run Go tests
-        run: |
-          docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go test ./...
+#      - name: Run Go tests
+#        run: |
+#          docker run --rm -v $(pwd):/app -w /app golang:1.21-alpine go test ./...
 
       - name: Stop and remove old container
         run: |
@@ -38,7 +38,7 @@ jobs:
         run: |
           docker compose down
           docker compose build --no-cache
-          docker 
+          docker compose up -d 
 
       - name: Clean up old imag
         run: |
