@@ -77,6 +77,7 @@ func (b *Bot) Start() {
 func (b *Bot) isUserAllowed(userID int64) bool {
 	// Если не указаны администраторы, разрешаем всем
 	log.Printf("Запрос от %d", userID)
+	log.Printf("Админы %d", b.config.AdminUsers)
 	if len(b.config.AdminUsers) == 0 {
 		return true
 	}
