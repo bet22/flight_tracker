@@ -77,7 +77,6 @@ func (b *Bot) Start() {
 func (b *Bot) isUserAllowed(userID int64) bool {
 	// Если не указаны администраторы, разрешаем всем
 	log.Printf("Запрос от %d", userID)
-	log.Printf("Админы %d", b.config.AdminUsers)
 	if len(b.config.AdminUsers) == 0 {
 		return true
 	}
@@ -205,9 +204,9 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 func (b *Bot) handleOrigin(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
 
-	if len(args) >= 2 {
+	if len(args) <= 2 {
 		b.SendMessage(message.Chat.ID,
-			"❌ Укажите город вылета. Например: <code>/origin set москва</code>")
+			"❌ Укажите город вылета. Например: <code>/origin москва</code>")
 		return
 	}
 	cityName := strings.Join(args[2:], " ")
