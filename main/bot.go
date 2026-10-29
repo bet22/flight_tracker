@@ -75,13 +75,10 @@ func (b *Bot) Start() {
 }
 
 func (b *Bot) isUserAllowed(userID int64) bool {
-	// Если не указаны администраторы, разрешаем всем
 	log.Printf("Запрос от %d", userID)
-	if len(b.config.AdminUsers) == 0 {
-		return true
-	}
 
-	// Проверяем есть ли пользователь в списке администраторов
+	// Доступ только явно указанным администраторам.
+	// Пустой список не должен открывать бота всем (проверяется в AppConfig.Validate).
 	return slices.Contains(b.config.AdminUsers, userID)
 }
 

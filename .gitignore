@@ -27,6 +27,15 @@ go.work.sum
 # env file
 .env
 
+# local build artifacts
+/main/my
+
+# macOS
+.DS_Store
+
+# local tooling
+.qwen/
+
 # Editor/IDE
 .idea/
 .idea/*

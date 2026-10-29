@@ -34,6 +34,9 @@ func (config *AppConfig) Validate() error {
 	if config.TelegramBotToken == "" {
 		errs = append(errs, "TELEGRAM_BOT_TOKEN не установлен")
 	}
+	if len(config.AdminUsers) == 0 {
+		errs = append(errs, "ADMIN_USER_IDS не установлен (бот не должен быть доступен всем пользователям)")
+	}
 	if config.TravelPayoutsToken == "" {
 		errs = append(errs, "TRAVELPAYOUTS_TOKEN не установлен")
 	}
@@ -77,13 +80,16 @@ func loadConfig() (*AppConfig, error) {
 	}
 
 	var adminUsers []int64
-	if adminIDs := getEnv("ADMIN_USER_IDS", ""); adminIDs != "" {
-		ids := strings.Split(adminIDs, ",")
-		for _, idStr := range ids {
-			if id, err := strconv.ParseInt(strings.TrimSpace(idStr), 10, 64); err == nil {
-				adminUsers = append(adminUsers, id)
-			}
+	for _, idStr := range strings.Split(getEnv("ADMIN_USER_IDS", ""), ",") {
+		idStr = strings.TrimSpace(idStr)
+		if idStr == "" {
+			continue
 		}
+		id, err := strconv.ParseInt(idStr, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("некорректный ID в ADMIN_USER_IDS: %q", idStr)
+		}
+		adminUsers = append(adminUsers, id)
 	}
 
 	dateFilter := DateFilter{
@@ -126,7 +132,7 @@ func loadConfig() (*AppConfig, error) {
 		TravelPayoutsToken:    os.Getenv("TRAVELPAYOUTS_TOKEN"),
 		TravelPayoutsUrlPrice: os.Getenv("TRAVELPAYOUTS_URL_PRICE"),
 		OriginIATA:            getEnvStringArray("ORIGIN_IATA", []string{""}),
-		DestinationIATA:       os.Getenv("DESTINATION_IATA"),
+		DestinationIATA:       strings.ToUpper(strings.TrimSpace(os.Getenv("DESTINATION_IATA"))),
 		MaxPrice:              getEnvInt("MAX_PRICE", 30000),
 		MonthsToSearch:        getEnvInt("MONTHS_TO_SEARCH", 3),
 		AdminUsers:            adminUsers,
@@ -156,12 +162,22 @@ func getEnv(key string, defaultValue string) string {
 	return defaultValue
 }
 
-// Для строкового массива
+// Для строкового массива: "ovb, bax" -> ["OVB", "BAX"]
 func getEnvStringArray(key string, defaultValue []string) []string {
 	value := os.Getenv(key)
 	if value == "" {
 		return defaultValue
 	}
 
-	return strings.Split(value, ",")
+	var result []string
+	for _, part := range strings.Split(value, ",") {
+		part = strings.ToUpper(strings.TrimSpace(part))
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	if len(result) == 0 {
+		return defaultValue
+	}
+	return result
 }
