@@ -88,12 +88,7 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 <b>Команды:</b>
 /search - 🔍 Начать поиск билетов
 /status - 📊 Статус бота
-/help - ❓ Помощь
-
-<b>Направления:</b>
-• Новосибирск/Барнаул → Денпасар (Бали)
-• Макс. цена: 35,000 руб.
-• Поиск на 6 месяцев вперёд`
+/help - ❓ Помощь`
 
 	b.SendMessage(message.Chat.ID, text)
 }
@@ -129,7 +124,7 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 	}
 
 	// Отправляем сообщение о начале поиска
-	b.SendMessage(message.Chat.ID, "🔍 <b>Начинаю поиск билетов...</b>\nЭто займет несколько секунд.")
+	b.SendMessage(message.Chat.ID, "🔍 <b>Начинаю поиск билетов</b>")
 
 	// Выполняем поиск
 	result, err := b.flightSearch.Search()
@@ -182,9 +177,9 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 
 <b>Фильтр дат:</b>
 /datefilter - Показать текущий фильтр дат
-/datefilter set 2024-06-01 2024-06-15 - Установить диапазон
-/datefilter add 2024-06-15 - Добавить дату в список
-/datefilter remove 2024-06-15 - Удалить дату из списка
+/datefilter set 2027-06-01 2027-06-15 - Установить диапазон
+/datefilter add 2027-06-15 - Добавить дату в список
+/datefilter remove 2027-06-15 - Удалить дату из списка
 /datefilter clear - Очистить фильтр дат
 /datefilter disable - Отключить фильтр дат
 
@@ -201,12 +196,12 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 func (b *Bot) handleOrigin(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
 
-	if len(args) <= 2 {
+	if len(args) < 2 {
 		b.SendMessage(message.Chat.ID,
-			"❌ Укажите город вылета. Например: <code>/origin москва</code>")
+			"❌ Укажите город вылета. Например: /origin москва")
 		return
 	}
-	cityName := strings.Join(args[2:], " ")
+	cityName := strings.Join(args[1:], " ")
 	b.setOrigin(message.Chat.ID, cityName)
 }
 
@@ -227,14 +222,13 @@ func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 	b.SendMessage(message.Chat.ID, text)
 }
 
-// handleSetPrice обрабатывает команду /setprice <цена>
 func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
 
 	if len(args) < 2 {
 		b.SendMessage(message.Chat.ID,
 			fmt.Sprintf("💰 <b>Текущая макс. цена:</b> %d руб.\n\n"+
-				"Используйте: <code>/setprice 35000</code>", b.config.MaxPrice))
+				"Используйте: /setprice 35000", b.config.MaxPrice))
 		return
 	}
 
@@ -262,11 +256,6 @@ func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
 		fmt.Sprintf("✅ <b>Макс. цена изменена:</b>\n%d₽ → %d₽", oldPrice, newPrice))
 }
 
-// SendMessage отправляет сообщение в указанный чат
-//func (b *Bot) SendMessage(chatID int64, text string) {
-//	SendMessage(b, chatID, text)
-//}
-
 // Установка направления по названию города
 func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSearch int) bool {
 	codes, foundCityName := FindAirportCode(cityName)
@@ -275,9 +264,9 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 		// 🆕 Город не найден, показываем подсказку
 		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Город '%s' не найден.</b>\n\n"+
 			"💡 <i>Используйте:</i>\n"+
-			"<code>/search бангкок</code> - поиск по названию\n"+
-			"<code>/search BKK</code> - поиск по коду аэропорта\n"+
-			"<code>/cities</code> - список доступных городов", cityName))
+			"/search бангкок - поиск по названию\n"+
+			"/search BKK - поиск по коду аэропорта\n"+
+			"/cities - список доступных городов", cityName))
 		return false
 	}
 
@@ -308,22 +297,18 @@ func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 	text += GetCityList()
 	text += "\n\n💡 <i>Используйте команду /search ГОРОД для поиска</i>\n"
 	text += "Например:\n"
-	text += "<code>/search бангкок</code> - поиск по названию\n"
-	text += "<code>/search BKK</code> - поиск по коду аэропорта\n"
-	text += "<code>/search сидней</code> - поиск в Сидней\n"
-	text += "<code>/search</code> - поиск в текущее направление"
+	text += "/search бангкок - поиск по названию\n"
+	text += "/search BKK - поиск по коду аэропорта\n"
+	text += "/search - поиск в текущее направление"
 	b.SendMessage(message.Chat.ID, text)
 }
 
-// 🆕 ДОБАВЛЕНО: справка по команде origin
 func (b *Bot) setOrigin(chatID int64, cityName string) bool {
 	codes, _ := FindOriginAirportCode(cityName)
 
 	if codes == nil {
 		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Город вылета '%s' не найден.</b>\n\n"+
-			"💡 <i>Используйте:</i>\n"+
-			"<code>/origin list</code> - список доступных городов\n"+
-			"<code>/origin set москва</code> - установить Москву", cityName))
+			"💡 <i>Используйте:</i>\n"+"/origin москва - установить Москву", cityName))
 		return false
 	}
 	origin := codes[0]
@@ -355,7 +340,6 @@ func FindOriginAirportCode(cityName string) ([]string, string) {
 
 }
 
-// handleDateFilter обрабатывает команду /datefilter и его подкоманды
 func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
 
@@ -381,20 +365,19 @@ func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
 		b.sendDateFilterStatus(message.Chat.ID)
 	default:
 		b.SendMessage(message.Chat.ID, "❓ Неизвестная подкоманда. Используйте:\n"+
-			"<code>/datefilter</code> - показать текущий фильтр\n"+
-			"<code>/datefilter set 2024-06-01 2024-06-15</code> - установить диапазон\n"+
-			"<code>/datefilter add 2024-06-01</code> - добавить дату в список\n"+
-			"<code>/datefilter remove 2024-06-01</code> - удалить дату из списка\n"+
-			"<code>/datefilter clear</code> - очистить фильтр\n"+
-			"<code>/datefilter disable</code> - отключить фильтр")
+			"/datefilter - показать текущий фильтр\n"+
+			"/datefilter set 2027-06-01 2027-06-15 - установить диапазон\n"+
+			"/datefilter add 2027-06-01 - добавить дату в список\n"+
+			"/datefilter remove 2027-06-01 - удалить дату из списка\n"+
+			"/datefilter clear - очистить фильтр\n"+
+			"/datefilter disable - отключить фильтр")
 	}
 }
 
 func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 	if len(args) < 4 {
 		b.SendMessage(message.Chat.ID, "📅 <b>Установка диапазона дат</b>\n\n"+
-			"Используйте: <code>/datefilter set ГГГГ-ММ-ДД ГГГГ-ММ-ДД</code>\n\n"+
-			"Пример: <code>/datefilter set 2024-06-01 2024-06-15</code>")
+			"Пример: /datefilter set 2027-06-01 2027-06-15")
 		return
 	}
 
@@ -403,8 +386,7 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 
 	if err1 != nil || err2 != nil {
 		b.SendMessage(message.Chat.ID, "❌ <b>Неверный формат дат.</b>\n\n"+
-			"Используйте формат <code>ГГГГ-ММ-ДД</code>\n\n"+
-			"Пример: <code>/datefilter set 2024-06-01 2024-06-15</code>")
+			"Пример: /datefilter set 2027-06-01 2027-06-15")
 		return
 	}
 
@@ -423,8 +405,7 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
 	if len(args) < 3 {
 		b.SendMessage(message.Chat.ID, "📋 <b>Добавление даты в список</b>\n\n"+
-			"Используйте: <code>/datefilter add ГГГГ-ММ-ДД</code>\n\n"+
-			"Пример: <code>/datefilter add 2024-06-15</code>")
+			"Пример: /datefilter add 2027-06-15")
 		return
 	}
 
@@ -432,8 +413,7 @@ func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
 	_, err := time.Parse("2006-01-02", dateStr)
 	if err != nil {
 		b.SendMessage(message.Chat.ID, "❌ <b>Неверный формат даты.</b>\n\n"+
-			"Используйте формат <code>ГГГГ-ММ-ДД</code>\n\n"+
-			"Пример: <code>/datefilter add 2024-06-15</code>")
+			"Пример: /datefilter add 2027-06-15")
 		return
 	}
 
@@ -446,8 +426,7 @@ func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
 func (b *Bot) handleDateFilterRemove(message *tgbotapi.Message, args []string) {
 	if len(args) < 3 {
 		b.SendMessage(message.Chat.ID, "🗑️ <b>Удаление даты из списка</b>\n\n"+
-			"Используйте: <code>/datefilter remove ГГГГ-ММ-ДД</code>\n\n"+
-			"Пример: <code>/datefilter remove 2024-06-15</code>")
+			"Пример: /datefilter remove 2027-06-15")
 		return
 	}
 
@@ -476,8 +455,6 @@ func (b *Bot) sendDateFilterStatus(chatID int64) {
 	info := b.flightSearch.GetDateFilterInfo()
 	b.SendMessage(chatID, info)
 }
-
-const safeLimit = 4000
 
 func (b *Bot) SendMessage(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
