@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
@@ -15,6 +16,10 @@ type Bot struct {
 	api          *tgbotapi.BotAPI
 	config       *AppConfig
 	flightSearch *FlightSearch
+
+	// searchMu не даёт запустить два поиска одновременно
+	// (например, кнопкой и автоматическим поиском по расписанию).
+	searchMu sync.Mutex
 }
 
 func NewBot(config *AppConfig, flightSearch *FlightSearch) (*Bot, error) {
@@ -39,6 +44,12 @@ func (b *Bot) Start() {
 	updates := b.api.GetUpdatesChan(u)
 
 	for update := range updates {
+		// Обрабатываем нажатия на inline-кнопки
+		if update.CallbackQuery != nil {
+			b.handleCallback(update.CallbackQuery)
+			continue
+		}
+
 		if update.Message == nil {
 			continue
 		}
@@ -88,9 +99,11 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 <b>Команды:</b>
 /search - 🔍 Начать поиск билетов
 /status - 📊 Статус бота
-/help - ❓ Помощь`
+/help - ❓ Помощь
 
-	b.SendMessage(message.Chat.ID, text)
+Поиск также можно запустить кнопкой ниже.`
+
+	b.SendMessageWithKeyboard(message.Chat.ID, text, mainKeyboard())
 }
 
 func (b *Bot) handleSearch(message *tgbotapi.Message) {
@@ -123,20 +136,59 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 		}
 	}
 
-	// Отправляем сообщение о начале поиска
-	b.SendMessage(message.Chat.ID, "🔍 <b>Начинаю поиск билетов</b>")
+	// Запускаем поиск в фоне, чтобы бот продолжал реагировать на другие команды
+	b.startSearch(message.Chat.ID)
+}
 
-	// Выполняем поиск
+// startSearch выполняет поиск в отдельной горутине.
+// Одновременно может идти только один поиск.
+func (b *Bot) startSearch(chatID int64) {
+	go func() {
+		if !b.searchMu.TryLock() {
+			b.SendMessage(chatID, "⏳ <b>Поиск уже выполняется.</b> Подождите, пока он завершится.")
+			return
+		}
+		defer b.searchMu.Unlock()
+
+		b.SendMessage(chatID, "🔍 <b>Начинаю поиск билетов</b>")
+
+		result, err := b.flightSearch.Search()
+		if err != nil {
+			b.SendMessage(chatID, fmt.Sprintf("❌ <b>Ошибка при поиске:</b>\n<code>%v</code>", err))
+			return
+		}
+
+		log.Printf("Поиск завершён, длина результата: %d", len(result))
+		b.SendMessageWithKeyboard(chatID, result, mainKeyboard())
+	}()
+}
+
+// RunScheduledSearch запускает автоматический поиск и рассылает результат
+// администраторам. Если поиск уже идёт (например, запущен кнопкой),
+// задача пропускается, чтобы не дублировать запросы к API.
+func (b *Bot) RunScheduledSearch() {
+	if !b.searchMu.TryLock() {
+		log.Printf("Поиск уже выполняется, пропускаем задачу по расписанию")
+		return
+	}
+	defer b.searchMu.Unlock()
+
 	result, err := b.flightSearch.Search()
-	fmt.Printf("\n%s Подготовленный результат\n %s\n", time.Now().Format("2006-01-02 15:04"), result)
 	if err != nil {
-		b.SendMessage(message.Chat.ID, fmt.Sprintf("❌ <b>Ошибка при поиске:</b>\n<code>%v</code>", err))
+		log.Printf("❌ Ошибка автоматического поиска: %v", err)
+		return
 	}
 
-	b.SendMessage(message.Chat.ID, result)
+	for _, adminID := range b.config.AdminUsers {
+		b.SendMessageWithKeyboard(adminID, result, mainKeyboard())
+	}
 }
 
 func (b *Bot) handleStatus(message *tgbotapi.Message) {
+	b.sendStatus(message.Chat.ID)
+}
+
+func (b *Bot) sendStatus(chatID int64) {
 	text := fmt.Sprintf(`📊 <b>Статус бота</b>
 
 <b>Направления поиска:</b>
@@ -159,10 +211,14 @@ func (b *Bot) handleStatus(message *tgbotapi.Message) {
 		b.flightSearch.GetDateFilterInfo(),
 	)
 
-	b.SendMessage(message.Chat.ID, text)
+	b.SendMessageWithKeyboard(chatID, text, mainKeyboard())
 }
 
 func (b *Bot) handleHelp(message *tgbotapi.Message) {
+	b.sendHelp(message.Chat.ID)
+}
+
+func (b *Bot) sendHelp(chatID int64) {
 	text := `❓ <b>Помощь по боту</b>
 
 <b>Поиск:</b>
@@ -187,10 +243,13 @@ func (b *Bot) handleHelp(message *tgbotapi.Message) {
 /status - Показать статус бота
 /help - Эта справка
 
+<b>Кнопки:</b>
+Запускать поиск и открывать разделы можно кнопками под сообщением.
+
 <b>Автоматический поиск:</b>
 Бот автоматически ищет билеты каждый день в 10:00 и присылает уведомления.`
 
-	b.SendMessage(message.Chat.ID, text)
+	b.SendMessageWithKeyboard(chatID, text, mainKeyboard())
 }
 
 func (b *Bot) handleOrigin(message *tgbotapi.Message) {
@@ -293,6 +352,10 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 
 // Команда для списка городов (заменяет /destinations)
 func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
+	b.sendCitiesList(message.Chat.ID)
+}
+
+func (b *Bot) sendCitiesList(chatID int64) {
 	text := "🏙️ <b>Доступные города для поиска:</b>\n\n"
 	text += GetCityList()
 	text += "\n\n💡 <i>Используйте команду /search ГОРОД для поиска</i>\n"
@@ -300,7 +363,7 @@ func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 	text += "/search бангкок - поиск по названию\n"
 	text += "/search BKK - поиск по коду аэропорта\n"
 	text += "/search - поиск в текущее направление"
-	b.SendMessage(message.Chat.ID, text)
+	b.SendMessage(chatID, text)
 }
 
 func (b *Bot) setOrigin(chatID int64, cityName string) bool {
@@ -453,12 +516,90 @@ func (b *Bot) handleDateFilterDisable(message *tgbotapi.Message) {
 
 func (b *Bot) sendDateFilterStatus(chatID int64) {
 	info := b.flightSearch.GetDateFilterInfo()
-	b.SendMessage(chatID, info)
+	b.SendMessageWithKeyboard(chatID, info, mainKeyboard())
+}
+
+// handleCallback обрабатывает нажатия на inline-кнопки.
+func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
+	if query.From == nil || !b.isUserAllowed(query.From.ID) {
+		b.answerCallback(query.ID, "❌ У вас нет прав для использования этого бота.", true)
+		return
+	}
+
+	chatID := query.From.ID
+	if query.Message != nil {
+		chatID = query.Message.Chat.ID
+	}
+
+	if query.Data == "search" {
+		// Отвечаем сразу, чтобы у пользователя не крутился индикатор загрузки
+		b.answerCallback(query.ID, "🔍 Запускаю поиск…", false)
+	} else {
+		b.answerCallback(query.ID, "", false)
+	}
+
+	switch query.Data {
+	case "search":
+		b.startSearch(chatID)
+	case "status":
+		b.sendStatus(chatID)
+	case "help":
+		b.sendHelp(chatID)
+	case "cities":
+		b.sendCitiesList(chatID)
+	case "datefilter":
+		b.sendDateFilterStatus(chatID)
+	default:
+		b.SendMessage(chatID, "❓ Неизвестная кнопка.")
+	}
+}
+
+// answerCallback отвечает на callback-запрос Telegram.
+// alert=true показывает всплывающее окно вместо короткого уведомления.
+func (b *Bot) answerCallback(callbackID, text string, alert bool) {
+	var cfg tgbotapi.CallbackConfig
+	if alert {
+		cfg = tgbotapi.NewCallbackWithAlert(callbackID, text)
+	} else {
+		cfg = tgbotapi.NewCallback(callbackID, text)
+	}
+
+	if _, err := b.api.Request(cfg); err != nil {
+		log.Printf("Ошибка ответа на callback: %v", err)
+	}
+}
+
+// mainKeyboard — основные действия бота.
+func mainKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🔍 Начать поиск", "search"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "status"),
+			tgbotapi.NewInlineKeyboardButtonData("📅 Фильтр дат", "datefilter"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🏙️ Города", "cities"),
+			tgbotapi.NewInlineKeyboardButtonData("❓ Помощь", "help"),
+		),
+	)
 }
 
 func (b *Bot) SendMessage(chatID int64, text string) {
+	b.sendMessage(chatID, text, nil)
+}
+
+func (b *Bot) SendMessageWithKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) {
+	b.sendMessage(chatID, text, &keyboard)
+}
+
+func (b *Bot) sendMessage(chatID int64, text string, keyboard *tgbotapi.InlineKeyboardMarkup) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = tgbotapi.ModeHTML
+	if keyboard != nil {
+		msg.ReplyMarkup = keyboard
+	}
 	_, errSend := b.api.Send(msg)
 	if errSend != nil {
 		log.Printf("Ошибка отправки %v", errSend)
@@ -469,5 +610,4 @@ func (b *Bot) SendMessage(chatID int64, text string) {
 			log.Printf("Фолбэк тоже не удался: %v", err2)
 		}
 	}
-
 }

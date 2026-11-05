@@ -41,7 +41,7 @@ func main() {
 	}
 
 	// Запускаем автоматический поиск по расписанию
-	cronStop := startScheduledSearch(bot, config, flightSearch)
+	cronStop := startScheduledSearch(bot)
 
 	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
@@ -58,23 +58,13 @@ func main() {
 	bot.Start()
 }
 
-func startScheduledSearch(bot *Bot, config *AppConfig, flightSearch *FlightSearch) func() {
+func startScheduledSearch(bot *Bot) func() {
 	c := cron.New()
 
 	// Автоматический поиск каждый день в 10:00
 	_, err := c.AddFunc("0 10 * * *", func() {
 		log.Printf("Запуск автоматического поиска по расписанию")
-
-		result, err := flightSearch.Search()
-		if err != nil {
-			log.Printf("❌ Ошибка автоматического поиска: %v", err)
-			return
-		}
-
-		// Отправляем результат администраторам
-		for _, adminID := range config.AdminUsers {
-			bot.SendMessage(adminID, result)
-		}
+		bot.RunScheduledSearch()
 	})
 	if err != nil {
 		log.Printf("📅 Ошибка добавления cron задачи: %v", err)

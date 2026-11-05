@@ -342,9 +342,9 @@ func formatDuration(minutes int) string {
 		return fmt.Sprintf("%dч %dм", hours, mins)
 	} else if hours > 0 {
 		return fmt.Sprintf("%dч", hours)
-	} else {
-		return fmt.Sprintf("%dм", mins)
 	}
+
+	return fmt.Sprintf("%dм", mins)
 }
 
 func getTransfersText(transfers int) string {
