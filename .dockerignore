@@ -1,0 +1,10 @@
+.git
+.github
+.idea
+.qwen
+.DS_Store
+.env
+main/.env
+main/my
+/data
+*.md
