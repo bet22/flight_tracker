@@ -17,23 +17,61 @@ type Bot struct {
 	api          *tgbotapi.BotAPI
 	config       *AppConfig
 	flightSearch *FlightSearch
+	store        *SettingsStore
 
-	// searchMu не даёт запустить два поиска одновременно
-	// (например, кнопкой и автоматическим поиском по расписанию).
-	searchMu sync.Mutex
+	// searchLocks — по одному мьютексу на пользователя,
+	// чтобы поиски разных людей не блокировали друг друга.
+	locksMu     sync.Mutex
+	searchLocks map[int64]*sync.Mutex
+
+	// lastScheduled защищает от повторного запуска автопоиска в одну и ту же минуту.
+	scheduleMu    sync.Mutex
+	lastScheduled map[int64]string
 }
 
-func NewBot(config *AppConfig, flightSearch *FlightSearch) (*Bot, error) {
+func NewBot(config *AppConfig, flightSearch *FlightSearch, store *SettingsStore) (*Bot, error) {
 	bot, err := tgbotapi.NewBotAPI(config.TelegramBotToken)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Bot{
-		api:          bot,
-		config:       config,
-		flightSearch: flightSearch,
+		api:           bot,
+		config:        config,
+		flightSearch:  flightSearch,
+		store:         store,
+		searchLocks:   make(map[int64]*sync.Mutex),
+		lastScheduled: make(map[int64]string),
 	}, nil
+}
+
+// settingsFor возвращает настройки пользователя, создавая их при необходимости.
+func (b *Bot) settingsFor(userID int64) UserSettings {
+	b.store.EnsureUser(userID)
+	return b.store.Get(userID)
+}
+
+// userSearchLock возвращает мьютекс поиска конкретного пользователя.
+func (b *Bot) userSearchLock(userID int64) *sync.Mutex {
+	b.locksMu.Lock()
+	defer b.locksMu.Unlock()
+
+	lock, ok := b.searchLocks[userID]
+	if !ok {
+		lock = &sync.Mutex{}
+		b.searchLocks[userID] = lock
+	}
+	return lock
+}
+
+// updateSettings изменяет настройки пользователя, сохраняет их и сообщает об ошибке.
+func (b *Bot) updateSettings(userID, chatID int64, fn func(*UserSettings) error) bool {
+	if err := b.store.Update(userID, fn); err != nil {
+		log.Printf("Не удалось сохранить настройки пользователя %d: %v", userID, err)
+		b.SendMessage(chatID, "❌ <b>Не удалось сохранить настройки.</b>\nПопробуйте ещё раз.")
+		return false
+	}
+	return true
 }
 
 func (b *Bot) Start() {
@@ -51,7 +89,7 @@ func (b *Bot) Start() {
 			continue
 		}
 
-		if update.Message == nil {
+		if update.Message == nil || update.Message.From == nil {
 			continue
 		}
 
@@ -61,6 +99,9 @@ func (b *Bot) Start() {
 			b.SendMessage(update.Message.Chat.ID, "❌ У вас нет прав для использования этого бота.")
 			continue
 		}
+
+		// Создаём персональные настройки при первом обращении
+		b.store.EnsureUser(update.Message.From.ID)
 
 		// Обрабатываем команды
 		switch update.Message.Command() {
@@ -78,6 +119,8 @@ func (b *Bot) Start() {
 			b.handleOrigin(update.Message)
 		case "setprice":
 			b.handleSetPrice(update.Message)
+		case "schedule", "расписание":
+			b.handleSchedule(update.Message)
 		case "datefilter", "df":
 			b.handleDateFilter(update.Message)
 		default:
@@ -99,9 +142,11 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 
 <b>Команды:</b>
 /search - 🔍 Начать поиск билетов
-/status - 📊 Статус бота
+/status - 📊 Мои настройки
+/schedule - ⏰ Время автопоиска
 /help - ❓ Помощь
 
+Настройки у каждого пользователя свои и сохраняются автоматически.
 Поиск также можно запустить кнопкой ниже.`
 
 	b.SendMessageWithKeyboard(message.Chat.ID, text, mainKeyboard())
@@ -109,8 +154,11 @@ func (b *Bot) handleStart(message *tgbotapi.Message) {
 
 func (b *Bot) handleSearch(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
+	userID := message.From.ID
+	chatID := message.Chat.ID
 
-	monthsToSearch := b.config.MonthsToSearch
+	settings := b.settingsFor(userID)
+	monthsToSearch := settings.MonthsToSearch
 
 	// Если указано направление как второй параметр
 	if len(args) >= 2 {
@@ -120,77 +168,103 @@ func (b *Bot) handleSearch(message *tgbotapi.Message) {
 			var err error
 			monthsToSearch, err = strconv.Atoi(args[2])
 			if err != nil {
-				b.SendMessage(message.Chat.ID,
+				b.SendMessage(chatID,
 					fmt.Sprintf("❌ Неверное количество месяцев: <code>%s</code>. Введите число от 1 до 12.", args[2]))
 				return
 			}
 			if monthsToSearch < 1 || monthsToSearch > 12 {
-				b.SendMessage(message.Chat.ID,
+				b.SendMessage(chatID,
 					"❌ Количество месяцев должно быть от 1 до 12.")
 				return
 			}
 		}
 
-		success := b.setDestinationByCityName(message.Chat.ID, destination, monthsToSearch)
+		success := b.setDestinationByCityName(userID, chatID, destination, monthsToSearch)
 		if !success {
 			return
 		}
 	}
 
 	// Запускаем поиск в фоне, чтобы бот продолжал реагировать на другие команды
-	b.startSearch(message.Chat.ID)
+	b.startSearch(userID, chatID)
 }
 
 // startSearch выполняет поиск в отдельной горутине.
-// Одновременно может идти только один поиск.
-func (b *Bot) startSearch(chatID int64) {
+// Один пользователь не может запустить два поиска одновременно.
+func (b *Bot) startSearch(userID, chatID int64) {
 	go func() {
-		if !b.searchMu.TryLock() {
+		lock := b.userSearchLock(userID)
+		if !lock.TryLock() {
 			b.SendMessage(chatID, "⏳ <b>Поиск уже выполняется.</b> Подождите, пока он завершится.")
 			return
 		}
-		defer b.searchMu.Unlock()
+		defer lock.Unlock()
 
+		settings := b.settingsFor(userID)
 		b.SendMessage(chatID, "🔍 <b>Начинаю поиск билетов</b>")
 
-		result, err := b.flightSearch.Search()
+		result, err := b.flightSearch.Search(settings)
 		if err != nil {
 			b.SendMessage(chatID, fmt.Sprintf("❌ <b>Ошибка при поиске:</b>\n<code>%v</code>", err))
 			return
 		}
 
-		log.Printf("Поиск завершён, длина результата: %d", len(result))
+		log.Printf("Поиск пользователя %d завершён, длина результата: %d", userID, len(result))
 		b.SendMessageWithKeyboard(chatID, result, mainKeyboard())
 	}()
 }
 
-// RunScheduledSearch запускает автоматический поиск и рассылает результат
-// администраторам. Если поиск уже идёт (например, запущен кнопкой),
-// задача пропускается, чтобы не дублировать запросы к API.
-func (b *Bot) RunScheduledSearch() {
-	if !b.searchMu.TryLock() {
-		log.Printf("Поиск уже выполняется, пропускаем задачу по расписанию")
+// RunScheduledSearches запускает автопоиск для пользователей,
+// у которых текущее время совпадает с персональным расписанием.
+func (b *Bot) RunScheduledSearches(now time.Time) {
+	currentTime := now.Format("15:04")
+	minuteKey := now.Format("2006-01-02 15:04")
+
+	for userID, settings := range b.store.All() {
+		if !settings.Schedule.Enabled || settings.Schedule.Time != currentTime {
+			continue
+		}
+
+		b.scheduleMu.Lock()
+		if b.lastScheduled[userID] == minuteKey {
+			b.scheduleMu.Unlock()
+			continue
+		}
+		b.lastScheduled[userID] = minuteKey
+		b.scheduleMu.Unlock()
+
+		go b.runScheduledSearch(userID, settings)
+	}
+}
+
+// runScheduledSearch выполняет автопоиск по настройкам пользователя
+// и отправляет результат в его личный чат.
+func (b *Bot) runScheduledSearch(userID int64, settings UserSettings) {
+	lock := b.userSearchLock(userID)
+	if !lock.TryLock() {
+		log.Printf("Пользователь %d: поиск уже идёт, пропускаем автопоиск", userID)
 		return
 	}
-	defer b.searchMu.Unlock()
+	defer lock.Unlock()
 
-	result, err := b.flightSearch.Search()
+	log.Printf("Автопоиск для пользователя %d", userID)
+	result, err := b.flightSearch.Search(settings)
 	if err != nil {
-		log.Printf("❌ Ошибка автоматического поиска: %v", err)
+		log.Printf("❌ Ошибка автопоиска пользователя %d: %v", userID, err)
 		return
 	}
 
-	for _, adminID := range b.config.AdminUsers {
-		b.SendMessageWithKeyboard(adminID, result, mainKeyboard())
-	}
+	b.SendMessageWithKeyboard(userID, result, mainKeyboard())
 }
 
 func (b *Bot) handleStatus(message *tgbotapi.Message) {
-	b.sendStatus(message.Chat.ID)
+	b.sendStatus(message.From.ID, message.Chat.ID)
 }
 
-func (b *Bot) sendStatus(chatID int64) {
-	text := fmt.Sprintf(`📊 <b>Статус бота</b>
+func (b *Bot) sendStatus(userID, chatID int64) {
+	settings := b.settingsFor(userID)
+
+	text := fmt.Sprintf(`📊 <b>Ваши настройки</b>
 
 <b>Направления поиска:</b>
 • %s → %s
@@ -199,20 +273,109 @@ func (b *Bot) sendStatus(chatID int64) {
 • Макс. цена: %d руб.
 • Глубина поиска: %d месяцев
 • Макс. время полёта: %d мин.
-• Авто-поиск: каждый день в 10:00
+
+<b>Автопоиск:</b> %s
 
 %s
 
-Бот работает в штатном режиме 🟢`,
-		strings.Join(b.config.OriginIATA, "/"),
-		b.config.DestinationIATA,
-		b.config.MaxPrice,
-		b.config.MonthsToSearch,
-		b.config.MaxFlightTime,
-		b.flightSearch.GetDateFilterInfo(),
+Настройки сохраняются автоматически 🟢`,
+		cityNamesText(settings.OriginIATA),
+		getCityName(settings.DestinationIATA),
+		settings.MaxPrice,
+		settings.MonthsToSearch,
+		settings.MaxFlightTime,
+		settings.ScheduleInfo(),
+		settings.DateFilterInfo(),
 	)
 
 	b.SendMessageWithKeyboard(chatID, text, mainKeyboard())
+}
+
+func (b *Bot) handleSchedule(message *tgbotapi.Message) {
+	userID := message.From.ID
+	chatID := message.Chat.ID
+	args := strings.Fields(message.Text)
+
+	if len(args) < 2 {
+		b.sendSchedule(userID, chatID)
+		return
+	}
+
+	switch strings.ToLower(args[1]) {
+	case "on", "вкл", "включить":
+		b.setScheduleEnabled(userID, chatID, true)
+	case "off", "выкл", "выключить":
+		b.setScheduleEnabled(userID, chatID, false)
+	default:
+		value := args[1]
+		if strings.EqualFold(value, "set") && len(args) >= 3 {
+			value = args[2]
+		}
+
+		normalized, ok := normalizeScheduleTime(value)
+		if !ok {
+			b.SendMessage(chatID, "❌ <b>Неверное время.</b>\n\nПример: <code>/schedule 09:30</code>")
+			return
+		}
+
+		if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+			settings.Schedule.Enabled = true
+			settings.Schedule.Time = normalized
+			return nil
+		}) {
+			return
+		}
+
+		b.SendMessage(chatID, fmt.Sprintf("✅ <b>Автопоиск включён</b> ежедневно в <b>%s</b> (время сервера).", normalized))
+	}
+}
+
+func (b *Bot) setScheduleEnabled(userID, chatID int64, enabled bool) {
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.Schedule.Enabled = enabled
+		return nil
+	}) {
+		return
+	}
+
+	if enabled {
+		settings := b.settingsFor(userID)
+		b.SendMessage(chatID, fmt.Sprintf("✅ <b>Автопоиск включён</b> ежедневно в <b>%s</b> (время сервера).", settings.Schedule.Time))
+		return
+	}
+
+	b.SendMessage(chatID, "⏹️ <b>Автопоиск выключен.</b>")
+}
+
+func (b *Bot) sendSchedule(userID, chatID int64) {
+	settings := b.settingsFor(userID)
+	b.SendMessageWithKeyboard(chatID, scheduleText(settings), scheduleKeyboard())
+}
+
+func scheduleText(settings UserSettings) string {
+	return fmt.Sprintf(`⏰ <b>Автопоиск</b>
+
+Статус: %s
+
+<b>Как настроить:</b>
+/schedule 09:30 — включить и задать время
+/schedule on — включить
+/schedule off — выключить
+
+Время указывается в часовом поясе сервера.`, settings.ScheduleInfo())
+}
+
+func (b *Bot) handleScheduleCallback(query *tgbotapi.CallbackQuery, userID, chatID int64, messageID int) {
+	enabled := query.Data == "schedule:on"
+
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.Schedule.Enabled = enabled
+		return nil
+	}) {
+		return
+	}
+
+	b.sendOrEdit(chatID, messageID, scheduleText(b.settingsFor(userID)), scheduleKeyboard())
 }
 
 func (b *Bot) handleHelp(message *tgbotapi.Message) {
@@ -227,9 +390,10 @@ func (b *Bot) sendHelp(chatID int64) {
 /search бангкок - Поиск в конкретный город
 /search бангкок 6 - Поиск на 6 месяцев
 
-<b>Настройки:</b>
+<b>Настройки (у каждого свои):</b>
 /setprice - Показать/изменить макс. цену
 /origin - Управление городом вылета
+/schedule - Время автопоиска
 /cities - Список доступных городов
 
 <b>Фильтр дат:</b>
@@ -250,7 +414,9 @@ func (b *Bot) sendHelp(chatID int64) {
 Остальные кнопки открывают разделы бота.
 
 <b>Автоматический поиск:</b>
-Бот автоматически ищет билеты каждый день в 10:00 и присылает уведомления.`
+У каждого пользователя своё время автопоиска, по умолчанию 10:00.
+Изменить: /schedule 09:30 (время сервера).
+Все настройки сохраняются автоматически.`
 
 	b.SendMessageWithKeyboard(chatID, text, mainKeyboard())
 }
@@ -264,19 +430,7 @@ func (b *Bot) handleOrigin(message *tgbotapi.Message) {
 		return
 	}
 	cityName := strings.Join(args[1:], " ")
-	b.setOrigin(message.Chat.ID, cityName)
-}
-
-func (b *Bot) setDestination(chatID int64, destination string) {
-	oldDestination := b.config.DestinationIATA
-	b.flightSearch.SetDestination(destination)
-
-	b.SendMessage(chatID,
-		fmt.Sprintf("✅ <b>Направление изменено:</b>\n%s → %s\n➡️\n%s → %s",
-			strings.Join(b.config.OriginIATA, "/"),
-			getCityName(oldDestination),
-			strings.Join(b.config.OriginIATA, "/"),
-			getCityName(destination)))
+	b.setOrigin(message.From.ID, message.Chat.ID, cityName)
 }
 
 func (b *Bot) handleUnknown(message *tgbotapi.Message) {
@@ -286,44 +440,53 @@ func (b *Bot) handleUnknown(message *tgbotapi.Message) {
 
 func (b *Bot) handleSetPrice(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
+	userID := message.From.ID
+	chatID := message.Chat.ID
+
+	settings := b.settingsFor(userID)
 
 	if len(args) < 2 {
-		b.SendMessage(message.Chat.ID,
+		b.SendMessage(chatID,
 			fmt.Sprintf("💰 <b>Текущая макс. цена:</b> %d руб.\n\n"+
-				"Используйте: /setprice 35000", b.config.MaxPrice))
+				"Используйте: /setprice 35000", settings.MaxPrice))
 		return
 	}
 
 	newPrice, err := strconv.Atoi(args[1])
 	if err != nil {
-		b.SendMessage(message.Chat.ID,
+		b.SendMessage(chatID,
 			fmt.Sprintf("❌ Неверное значение: <code>%s</code>. Введите число.", args[1]))
 		return
 	}
 
 	if newPrice <= 0 {
-		b.SendMessage(message.Chat.ID, "❌ Цена должна быть больше 0.")
+		b.SendMessage(chatID, "❌ Цена должна быть больше 0.")
 		return
 	}
 
 	if newPrice > 1000000 {
-		b.SendMessage(message.Chat.ID, "❌ Цена слишком большая. Максимум: 1 000 000.")
+		b.SendMessage(chatID, "❌ Цена слишком большая. Максимум: 1 000 000.")
 		return
 	}
 
-	oldPrice := b.config.MaxPrice
-	b.flightSearch.SetMaxPrice(newPrice)
+	oldPrice := settings.MaxPrice
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.MaxPrice = newPrice
+		return nil
+	}) {
+		return
+	}
 
-	b.SendMessage(message.Chat.ID,
+	b.SendMessage(chatID,
 		fmt.Sprintf("✅ <b>Макс. цена изменена:</b>\n%d₽ → %d₽", oldPrice, newPrice))
 }
 
 // Установка направления по названию города
-func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSearch int) bool {
-	codes, foundCityName := FindAirportCode(cityName)
+func (b *Bot) setDestinationByCityName(userID, chatID int64, cityName string, monthsToSearch int) bool {
+	settings := b.settingsFor(userID)
 
+	codes, foundCityName := FindAirportCode(cityName)
 	if codes == nil {
-		// 🆕 Город не найден, показываем подсказку
 		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Город '%s' не найден.</b>\n\n"+
 			"💡 <i>Используйте:</i>\n"+
 			"/search бангкок - поиск по названию\n"+
@@ -332,12 +495,17 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 		return false
 	}
 
-	// 🆕 Если найдено несколько аэропортов, берем первый
+	// Если найдено несколько аэропортов, берем первый
 	destination := codes[0]
+	oldDestination := settings.DestinationIATA
 
-	b.flightSearch.SetMonthsToSearch(monthsToSearch)
-	oldDestination := b.config.DestinationIATA
-	b.flightSearch.SetDestination(destination)
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.DestinationIATA = destination
+		settings.MonthsToSearch = monthsToSearch
+		return nil
+	}) {
+		return false
+	}
 
 	var airportInfo string
 	if len(codes) > 1 {
@@ -345,9 +513,9 @@ func (b *Bot) setDestinationByCityName(chatID int64, cityName string, monthsToSe
 	}
 
 	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Направление изменено:</b>\n%s → %s\n➡️\n%s → %s%s",
-		strings.Join(b.config.OriginIATA, "/"),
+		cityNamesText(settings.OriginIATA),
 		getCityName(oldDestination),
-		strings.Join(b.config.OriginIATA, "/"),
+		cityNamesText(settings.OriginIATA),
 		foundCityName,
 		airportInfo))
 	return true
@@ -369,7 +537,8 @@ func (b *Bot) sendCitiesList(chatID int64) {
 	b.SendMessage(chatID, text)
 }
 
-func (b *Bot) setOrigin(chatID int64, cityName string) bool {
+func (b *Bot) setOrigin(userID, chatID int64, cityName string) bool {
+	settings := b.settingsFor(userID)
 	codes, _ := FindOriginAirportCode(cityName)
 
 	if codes == nil {
@@ -377,20 +546,26 @@ func (b *Bot) setOrigin(chatID int64, cityName string) bool {
 			"💡 <i>Используйте:</i>\n"+"/origin москва - установить Москву", cityName))
 		return false
 	}
+
 	origin := codes[0]
-	oldOrigins := make([]string, len(b.config.OriginIATA))
-	copy(oldOrigins, b.config.OriginIATA)
-	b.flightSearch.SetOriginIATA(origin)
+	oldOrigins := settings.OriginIATA
+
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.OriginIATA = []string{origin}
+		return nil
+	}) {
+		return false
+	}
 
 	var originInfo string
 	if len(codes) > 1 {
 		originInfo = fmt.Sprintf("\n🏢 Доступные аэропорты: %s", strings.Join(codes, ", "))
 	}
-	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Город вылета изменен:</b>\n%s → %s\n➡️\n%s → %s%s",
-		strings.Join(oldOrigins, "/"),
-		getCityName(b.config.DestinationIATA),
-		origin,
-		getCityName(b.config.DestinationIATA),
+
+	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Город вылета изменён:</b>\n🛫 %s → %s\n\n🛬 Город прилёта: %s%s",
+		cityNamesText(oldOrigins),
+		getCityName(origin),
+		getCityName(settings.DestinationIATA),
 		originInfo))
 	return true
 }
@@ -410,7 +585,7 @@ func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
 	args := strings.Fields(message.Text)
 
 	if len(args) < 2 {
-		b.sendDateFilterStatus(message.Chat.ID)
+		b.sendDateFilterStatus(message.From.ID, message.Chat.ID)
 		return
 	}
 
@@ -428,7 +603,7 @@ func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
 	case "disable", "отключить":
 		b.handleDateFilterDisable(message)
 	case "list", "список":
-		b.sendDateFilterStatus(message.Chat.ID)
+		b.sendDateFilterStatus(message.From.ID, message.Chat.ID)
 	default:
 		b.SendMessage(message.Chat.ID, "❓ Неизвестная подкоманда. Используйте:\n"+
 			"/datefilter - показать текущий фильтр\n"+
@@ -441,8 +616,11 @@ func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
 }
 
 func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
+	userID := message.From.ID
+	chatID := message.Chat.ID
+
 	if len(args) < 4 {
-		b.SendMessage(message.Chat.ID, "📅 <b>Установка диапазона дат</b>\n\n"+
+		b.SendMessage(chatID, "📅 <b>Установка диапазона дат</b>\n\n"+
 			"Пример: /datefilter set 2027-06-01 2027-06-15")
 		return
 	}
@@ -451,74 +629,108 @@ func (b *Bot) handleDateFilterSet(message *tgbotapi.Message, args []string) {
 	endDate, err2 := time.Parse("2006-01-02", args[3])
 
 	if err1 != nil || err2 != nil {
-		b.SendMessage(message.Chat.ID, "❌ <b>Неверный формат дат.</b>\n\n"+
+		b.SendMessage(chatID, "❌ <b>Неверный формат дат.</b>\n\n"+
 			"Пример: /datefilter set 2027-06-01 2027-06-15")
 		return
 	}
 
 	if endDate.Before(startDate) {
-		b.SendMessage(message.Chat.ID, "❌ <b>Дата окончания раньше даты начала.</b>")
+		b.SendMessage(chatID, "❌ <b>Дата окончания раньше даты начала.</b>")
 		return
 	}
 
-	b.flightSearch.SetDateRange(startDate, endDate)
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.SetDateRange(startDate, endDate)
+		return nil
+	}) {
+		return
+	}
 
-	b.SendMessage(message.Chat.ID, fmt.Sprintf("✅ <b>Диапазон дат установлен:</b>\n📅 с <code>%s</code> по <code>%s</code>",
+	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Диапазон дат установлен:</b>\n📅 с <code>%s</code> по <code>%s</code>",
 		startDate.Format("02.01.2006"),
 		endDate.Format("02.01.2006")))
 }
 
 func (b *Bot) handleDateFilterAdd(message *tgbotapi.Message, args []string) {
+	userID := message.From.ID
+	chatID := message.Chat.ID
+
 	if len(args) < 3 {
-		b.SendMessage(message.Chat.ID, "📋 <b>Добавление даты в список</b>\n\n"+
+		b.SendMessage(chatID, "📋 <b>Добавление даты в список</b>\n\n"+
 			"Пример: /datefilter add 2027-06-15")
 		return
 	}
 
 	dateStr := args[2]
-	_, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		b.SendMessage(message.Chat.ID, "❌ <b>Неверный формат даты.</b>\n\n"+
+	if _, err := time.Parse("2006-01-02", dateStr); err != nil {
+		b.SendMessage(chatID, "❌ <b>Неверный формат даты.</b>\n\n"+
 			"Пример: /datefilter add 2027-06-15")
 		return
 	}
 
-	b.flightSearch.AddDateToDate(dateStr)
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		settings.AddDate(dateStr)
+		return nil
+	}) {
+		return
+	}
 
 	t, _ := time.Parse("2006-01-02", dateStr)
-	b.SendMessage(message.Chat.ID, fmt.Sprintf("✅ <b>Дата добавлена:</b> <code>%s</code> (%s)", dateStr, getRussianDayOfWeek(t.Weekday())))
+	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Дата добавлена:</b> <code>%s</code> (%s)", dateStr, getRussianDayOfWeek(t.Weekday())))
 }
 
 func (b *Bot) handleDateFilterRemove(message *tgbotapi.Message, args []string) {
+	userID := message.From.ID
+	chatID := message.Chat.ID
+
 	if len(args) < 3 {
-		b.SendMessage(message.Chat.ID, "🗑️ <b>Удаление даты из списка</b>\n\n"+
+		b.SendMessage(chatID, "🗑️ <b>Удаление даты из списка</b>\n\n"+
 			"Пример: /datefilter remove 2027-06-15")
 		return
 	}
 
 	dateStr := args[2]
-	success := b.flightSearch.RemoveDateFromDate(dateStr)
+	removed := false
 
-	if !success {
-		b.SendMessage(message.Chat.ID, fmt.Sprintf("❌ <b>Дата <code>%s</code> не найдена в списке.</b>", dateStr))
+	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+		removed = settings.RemoveDate(dateStr)
+		return nil
+	}) {
 		return
 	}
 
-	b.SendMessage(message.Chat.ID, fmt.Sprintf("🗑️ <b>Дата удалена:</b> <code>%s</code>", dateStr))
+	if !removed {
+		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Дата <code>%s</code> не найдена в списке.</b>", dateStr))
+		return
+	}
+
+	b.SendMessage(chatID, fmt.Sprintf("🗑️ <b>Дата удалена:</b> <code>%s</code>", dateStr))
 }
 
 func (b *Bot) handleDateFilterClear(message *tgbotapi.Message) {
-	b.flightSearch.ClearDateFilter()
+	if !b.updateSettings(message.From.ID, message.Chat.ID, func(settings *UserSettings) error {
+		settings.ClearDateFilter()
+		return nil
+	}) {
+		return
+	}
+
 	b.SendMessage(message.Chat.ID, "🧹 <b>Фильтр дат очищен.</b>\nТеперь поиск идёт по всем датам.")
 }
 
 func (b *Bot) handleDateFilterDisable(message *tgbotapi.Message) {
-	b.flightSearch.DisableDateFilter()
+	if !b.updateSettings(message.From.ID, message.Chat.ID, func(settings *UserSettings) error {
+		settings.DisableDateFilter()
+		return nil
+	}) {
+		return
+	}
+
 	b.SendMessage(message.Chat.ID, "⏹️ <b>Фильтр дат отключён.</b>\nТеперь поиск идёт по всем датам.")
 }
 
-func (b *Bot) sendDateFilterStatus(chatID int64) {
-	info := b.flightSearch.GetDateFilterInfo()
+func (b *Bot) sendDateFilterStatus(userID, chatID int64) {
+	info := b.settingsFor(userID).DateFilterInfo()
 	b.SendMessageWithKeyboard(chatID, info, mainKeyboard())
 }
 
@@ -529,7 +741,10 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		return
 	}
 
-	chatID := query.From.ID
+	userID := query.From.ID
+	b.store.EnsureUser(userID)
+
+	chatID := userID
 	if query.Message != nil {
 		chatID = query.Message.Chat.ID
 	}
@@ -552,19 +767,23 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 	case query.Data == "menu:main":
 		b.sendOrEdit(chatID, messageID, "👋 <b>Главное меню</b>\n\nВыберите действие:", mainKeyboard())
 	case strings.HasPrefix(query.Data, "origin:"), strings.HasPrefix(query.Data, "dest:"):
-		b.handleCityCallback(query, chatID, messageID)
+		b.handleCityCallback(query, userID, chatID, messageID)
+	case strings.HasPrefix(query.Data, "schedule:"):
+		b.handleScheduleCallback(query, userID, chatID, messageID)
 	default:
 		switch query.Data {
 		case "search":
-			b.startSearch(chatID)
+			b.startSearch(userID, chatID)
 		case "status":
-			b.sendStatus(chatID)
+			b.sendStatus(userID, chatID)
 		case "help":
 			b.sendHelp(chatID)
 		case "cities":
 			b.sendCitiesList(chatID)
+		case "schedule":
+			b.sendSchedule(userID, chatID)
 		case "datefilter":
-			b.sendDateFilterStatus(chatID)
+			b.sendDateFilterStatus(userID, chatID)
 		default:
 			b.SendMessage(chatID, "❓ Неизвестная кнопка.")
 		}
@@ -598,11 +817,27 @@ func mainKeyboard() tgbotapi.InlineKeyboardMarkup {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("📊 Статус", "status"),
-			tgbotapi.NewInlineKeyboardButtonData("📅 Фильтр дат", "datefilter"),
+			tgbotapi.NewInlineKeyboardButtonData("⏰ Автопоиск", "schedule"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📅 Фильтр дат", "datefilter"),
 			tgbotapi.NewInlineKeyboardButtonData("🏙️ Города", "cities"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("❓ Помощь", "help"),
+		),
+	)
+}
+
+// scheduleKeyboard — управление персональным автопоиском.
+func scheduleKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Включить", "schedule:on"),
+			tgbotapi.NewInlineKeyboardButtonData("⏹️ Выключить", "schedule:off"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🏠 В меню", "menu:main"),
 		),
 	)
 }
@@ -705,14 +940,16 @@ func cityMenuKeyboard(prefix string, options []cityOption, page int) tgbotapi.In
 }
 
 // showCityMenu показывает список городов для выбора вылета или прилёта.
-func (b *Bot) showCityMenu(chatID int64, messageID int, isOrigin bool, page int) {
+func (b *Bot) showCityMenu(userID, chatID int64, messageID int, isOrigin bool, page int) {
+	settings := b.settingsFor(userID)
+
 	prefix := "dest"
 	title := fmt.Sprintf("🛬 <b>Выберите город прилёта</b>\n\nТекущий: <b>%s</b>",
-		getCityName(b.config.DestinationIATA))
+		getCityName(settings.DestinationIATA))
 	if isOrigin {
 		prefix = "origin"
 		title = fmt.Sprintf("🛫 <b>Выберите город вылета</b>\n\nТекущий: <b>%s</b>",
-			cityNamesText(b.config.OriginIATA))
+			cityNamesText(settings.OriginIATA))
 	}
 
 	keyboard := cityMenuKeyboard(prefix, cityOptions(), page)
@@ -721,7 +958,7 @@ func (b *Bot) showCityMenu(chatID int64, messageID int, isOrigin bool, page int)
 }
 
 // handleCityCallback обрабатывает выбор страницы и самого города.
-func (b *Bot) handleCityCallback(query *tgbotapi.CallbackQuery, chatID int64, messageID int) {
+func (b *Bot) handleCityCallback(query *tgbotapi.CallbackQuery, userID, chatID int64, messageID int) {
 	parts := strings.Split(query.Data, ":")
 	if len(parts) < 2 {
 		return
@@ -735,7 +972,7 @@ func (b *Bot) handleCityCallback(query *tgbotapi.CallbackQuery, chatID int64, me
 		if len(parts) >= 3 {
 			page, _ = strconv.Atoi(parts[2])
 		}
-		b.showCityMenu(chatID, messageID, isOrigin, page)
+		b.showCityMenu(userID, chatID, messageID, isOrigin, page)
 
 	case "set":
 		if len(parts) < 3 {
@@ -748,19 +985,26 @@ func (b *Bot) handleCityCallback(query *tgbotapi.CallbackQuery, chatID int64, me
 			return
 		}
 
-		if isOrigin {
-			b.flightSearch.SetOriginIATA(option.code)
-		} else {
-			b.flightSearch.SetDestination(option.code)
+		if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
+			if isOrigin {
+				settings.OriginIATA = []string{option.code}
+			} else {
+				settings.DestinationIATA = option.code
+			}
+			return nil
+		}) {
+			return
 		}
+
+		settings := b.settingsFor(userID)
 
 		var text string
 		if isOrigin {
 			text = fmt.Sprintf("✅ <b>Город вылета изменён:</b>\n🛫 %s\n\n🛬 Город прилёта: %s",
-				getCityName(option.code), getCityName(b.config.DestinationIATA))
+				getCityName(option.code), getCityName(settings.DestinationIATA))
 		} else {
 			text = fmt.Sprintf("✅ <b>Город прилёта изменён:</b>\n🛬 %s\n\n🛫 Город вылета: %s",
-				getCityName(option.code), cityNamesText(b.config.OriginIATA))
+				getCityName(option.code), cityNamesText(settings.OriginIATA))
 		}
 
 		b.sendOrEdit(chatID, messageID, text, mainKeyboard())

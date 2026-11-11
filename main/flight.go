@@ -84,24 +84,24 @@ func NewFlightSearch(config *AppConfig) *FlightSearch {
 	}
 }
 
-func (fs *FlightSearch) Search() (string, error) {
+func (fs *FlightSearch) Search(settings UserSettings) (string, error) {
 	fmt.Printf("\n%s Начинаем поиск билетов...\n", time.Now().Format("2006-01-02 15:04"))
 
 	var arrival []Flight
 	var departure []Flight
 
-	for _, origin := range fs.config.OriginIATA {
-		flights := fs.searchFlightsForOrigin(origin, fs.config.MonthsToSearch, false)
+	for _, origin := range settings.OriginIATA {
+		flights := fs.searchFlightsForOrigin(settings, origin, false)
 		arrival = append(arrival, flights...)
 	}
 
-	if len(fs.config.OriginIATA) > 0 {
-		departure = append(departure, fs.searchFlightsForOrigin(fs.config.DestinationIATA, fs.config.MonthsToSearch, true)...)
+	if len(settings.OriginIATA) > 0 {
+		departure = append(departure, fs.searchFlightsForOrigin(settings, settings.DestinationIATA, true)...)
 	}
 
 	if len(arrival) > 0 || len(departure) > 0 {
-		fmt.Printf("\n%s Найдено %d билетов\n", time.Now().Format("2006-01-02 15:04"), len(arrival))
-		return fs.formatMessage(arrival, departure), nil
+		fmt.Printf("\n%s Найдено %d билетов\n", time.Now().Format("2006-01-02 15:04"), len(arrival)+len(departure))
+		return fs.formatMessage(settings, arrival, departure), nil
 	}
 	fmt.Printf("\n%s Дешёвых билетов не найдено\n", time.Now().Format("2006-01-02 15:04"))
 	return "ℹ️ Дешёвых билетов не найдено.", nil
@@ -110,22 +110,22 @@ func (fs *FlightSearch) Search() (string, error) {
 // httpClient переиспользуется для всех запросов
 var httpClient = &http.Client{Timeout: 30 * time.Second}
 
-func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int, backTicket bool) []Flight {
+func (fs *FlightSearch) searchFlightsForOrigin(settings UserSettings, origin string, backTicket bool) []Flight {
 	fmt.Printf("\n%s Start method searchFlightsForOrigin\n", time.Now().Format("2006-01-02 15:04"))
 	var flights []Flight
 	var dest string
 	if backTicket {
-		if len(fs.config.OriginIATA) == 0 {
+		if len(settings.OriginIATA) == 0 {
 			fmt.Printf("Пустой OriginIATA. Невозможно найти обратный билет")
 			return nil
 		}
-		dest = fs.config.OriginIATA[0]
+		dest = settings.OriginIATA[0]
 	} else {
-		dest = fs.config.DestinationIATA
+		dest = settings.DestinationIATA
 	}
 
 	now := time.Now()
-	for monthOffset := 0; monthOffset < monthsToSearch; monthOffset++ {
+	for monthOffset := 0; monthOffset < settings.MonthsToSearch; monthOffset++ {
 		monthDate := now.AddDate(0, monthOffset, 0)
 		monthStr := monthDate.Format("2006-01")
 
@@ -177,13 +177,13 @@ func (fs *FlightSearch) searchFlightsForOrigin(origin string, monthsToSearch int
 		}
 
 		for _, flightData := range apiResponse.Data {
-			if flightData.Price > fs.config.MaxPrice {
+			if flightData.Price > settings.MaxPrice {
 				continue
 			}
-			if flightData.Duration > fs.config.MaxFlightTime {
+			if flightData.Duration > settings.MaxFlightTime {
 				continue
 			}
-			if !fs.config.DateFilter.Matches(flightData.DepartureAt) {
+			if !settings.DateFilter.Matches(flightData.DepartureAt) {
 				continue
 			}
 			departureTime, err := time.Parse(time.RFC3339, flightData.DepartureAt)
@@ -217,6 +217,9 @@ func (df *DateFilter) Matches(dateStr string) bool {
 	if !df.Enabled {
 		return true
 	}
+	if len(dateStr) < 10 {
+		return false
+	}
 
 	flightDate, err := time.Parse("2006-01-02", dateStr[:10])
 	if err != nil {
@@ -225,11 +228,11 @@ func (df *DateFilter) Matches(dateStr string) bool {
 
 	switch df.Mode {
 	case "range":
-		// Проверяем, попадает ли дата в диапазон
+		// Проверяем, попадает ли дата в диапазон (включая последний день)
 		if !df.StartDate.IsZero() && flightDate.Before(df.StartDate) {
 			return false
 		}
-		if !df.EndDate.IsZero() && flightDate.After(df.EndDate) {
+		if !df.EndDate.IsZero() && !flightDate.Before(df.EndDate.AddDate(0, 0, 1)) {
 			return false
 		}
 		return true
@@ -248,13 +251,15 @@ func (df *DateFilter) Matches(dateStr string) bool {
 	}
 }
 
-func (fs *FlightSearch) formatMessage(arrival []Flight, departure []Flight) string {
+func (fs *FlightSearch) formatMessage(settings UserSettings, arrival []Flight, departure []Flight) string {
 	var sb strings.Builder
 
 	sb.WriteString("✈️ <b>НАЙДЕНЫ ДЕШЁВЫЕ БИЛЕТЫ!</b>\n\n")
 
-	fs.formatFlightGroup(&sb, arrival, fs.config.DestinationIATA)
-	fs.formatFlightGroup(&sb, departure, fs.config.OriginIATA[0])
+	fs.formatFlightGroup(&sb, arrival, settings.DestinationIATA)
+	if len(settings.OriginIATA) > 0 {
+		fs.formatFlightGroup(&sb, departure, settings.OriginIATA[0])
+	}
 
 	sb.WriteString("📊 <b>Информация:</b>\n")
 	sb.WriteString("   • 🎫 - ссылка на покупку\n")
@@ -363,111 +368,4 @@ func minPrice(a, b int) int {
 		return a
 	}
 	return b
-}
-
-func (fs *FlightSearch) SetDestination(destination string) {
-	fs.config.DestinationIATA = strings.ToUpper(destination)
-}
-
-func (fs *FlightSearch) SetMonthsToSearch(monthsToSearch int) {
-	fs.config.MonthsToSearch = monthsToSearch
-}
-
-func (fs *FlightSearch) SetOriginIATA(origin string) {
-	for _, existing := range fs.config.OriginIATA {
-		if existing == origin {
-			return
-		}
-	}
-	fs.config.OriginIATA = []string{origin}
-}
-
-func (fs *FlightSearch) SetMaxPrice(price int) {
-	fs.config.MaxPrice = price
-}
-
-func (fs *FlightSearch) SetDateRange(startDate, endDate time.Time) {
-	fs.config.DateFilter = DateFilter{
-		Enabled:   true,
-		Mode:      "range",
-		StartDate: startDate,
-		EndDate:   endDate,
-		Dates:     nil,
-	}
-}
-
-func (fs *FlightSearch) AddDateToDate(dateStr string) {
-	date, err := time.Parse("2006-01-02", dateStr)
-	if err != nil {
-		return
-	}
-	if fs.config.DateFilter.Mode != "list" {
-		fs.config.DateFilter = DateFilter{
-			Enabled: true,
-			Mode:    "list",
-			Dates:   []string{},
-		}
-	}
-	for _, d := range fs.config.DateFilter.Dates {
-		if d == dateStr {
-			return
-		}
-	}
-	fs.config.DateFilter.Dates = append(fs.config.DateFilter.Dates, dateStr)
-	fs.config.DateFilter.StartDate = time.Time{}
-	fs.config.DateFilter.EndDate = time.Time{}
-	_ = date
-}
-
-func (fs *FlightSearch) RemoveDateFromDate(dateStr string) bool {
-	if fs.config.DateFilter.Mode != "list" {
-		return false
-	}
-	for i, d := range fs.config.DateFilter.Dates {
-		if d == dateStr {
-			fs.config.DateFilter.Dates = append(fs.config.DateFilter.Dates[:i], fs.config.DateFilter.Dates[i+1:]...)
-			if len(fs.config.DateFilter.Dates) == 0 {
-				fs.config.DateFilter.Enabled = false
-			}
-			return true
-		}
-	}
-	return false
-}
-
-func (fs *FlightSearch) ClearDateFilter() {
-	fs.config.DateFilter.Dates = nil
-	fs.config.DateFilter.StartDate = time.Time{}
-	fs.config.DateFilter.EndDate = time.Time{}
-	fs.config.DateFilter.Enabled = false
-	fs.config.DateFilter.Mode = ""
-}
-
-func (fs *FlightSearch) DisableDateFilter() {
-	fs.config.DateFilter.Enabled = false
-}
-
-func (fs *FlightSearch) GetDateFilterInfo() string {
-	if !fs.config.DateFilter.Enabled {
-		return "❌ <b>Фильтр дат:</b> отключен\nПоиск по всем датам."
-	}
-
-	switch fs.config.DateFilter.Mode {
-	case "range":
-		return fmt.Sprintf("📅 <b>Фильтр дат:</b> диапазон\n   с <code>%s</code> по <code>%s</code>",
-			fs.config.DateFilter.StartDate.Format("02.01.2006"),
-			fs.config.DateFilter.EndDate.Format("02.01.2006"))
-	case "list":
-		if len(fs.config.DateFilter.Dates) == 0 {
-			return "❌ <b>Фильтр дат:</b> пустой список"
-		}
-		datesStr := ""
-		for _, d := range fs.config.DateFilter.Dates {
-			t, _ := time.Parse("2006-01-02", d)
-			datesStr += fmt.Sprintf("\n   • <code>%s</code> (%s)", d, getRussianDayOfWeek(t.Weekday()))
-		}
-		return fmt.Sprintf("📋 <b>Фильтр дат:</b> конкретные даты%s", datesStr)
-	default:
-		return "❓ <b>Фильтр дат:</b> неизвестный режим"
-	}
 }

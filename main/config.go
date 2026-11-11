@@ -11,7 +11,9 @@ import (
 	"github.com/joho/godotenv"
 )
 
-// AppConfig содержит все настройки приложения
+// AppConfig содержит все настройки приложения.
+// Значения поиска используются как настройки по умолчанию для новых пользователей;
+// дальше каждый пользователь хранит свои настройки в SettingsStore.
 type AppConfig struct {
 	TelegramBotUrl        string
 	TelegramBotToken      string
@@ -25,6 +27,8 @@ type AppConfig struct {
 	MonthsToSearch        int
 	MaxFlightTime         int
 	DateFilter            DateFilter
+	SettingsFile          string
+	ScheduleTime          string
 }
 
 // Validate проверяет корректность конфигурации
@@ -57,6 +61,14 @@ func (config *AppConfig) Validate() error {
 	}
 	if config.MaxFlightTime <= 0 {
 		errs = append(errs, fmt.Sprintf("MAX_FLIGHT_TIME должен быть > 0 (текущее: %d)", config.MaxFlightTime))
+	}
+	if config.SettingsFile == "" {
+		errs = append(errs, "SETTINGS_FILE не установлен")
+	}
+	if normalized, ok := normalizeScheduleTime(config.ScheduleTime); !ok {
+		errs = append(errs, fmt.Sprintf("SCHEDULE_TIME должен быть в формате HH:MM (текущее: %q)", config.ScheduleTime))
+	} else {
+		config.ScheduleTime = normalized
 	}
 
 	if len(errs) > 0 {
@@ -138,6 +150,8 @@ func loadConfig() (*AppConfig, error) {
 		AdminUsers:            adminUsers,
 		MaxFlightTime:         getEnvInt("MAX_FLIGHT_TIME", 1440),
 		DateFilter:            dateFilter,
+		SettingsFile:          getEnv("SETTINGS_FILE", "data/settings.json"),
+		ScheduleTime:          getEnv("SCHEDULE_TIME", defaultScheduleTime),
 	}, nil
 }
 

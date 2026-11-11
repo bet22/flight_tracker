@@ -20,10 +20,11 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -o main .
 
 FROM alpine:latest
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 RUN adduser -D -u 1001 appuser
+WORKDIR /app
+COPY --from=builder --chown=appuser:appuser /app/main ./main
+RUN mkdir -p /app/data && chown -R appuser:appuser /app
 USER appuser
-WORKDIR /root/
-COPY --from=builder --chown=appuser:appuser /app/main .
 
 CMD ["./main"]

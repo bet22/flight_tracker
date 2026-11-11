@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"runtime/debug"
 	"syscall"
+	"time"
 
 	"github.com/robfig/cron/v3"
 )
@@ -31,11 +32,20 @@ func main() {
 
 	fmt.Println("🚀 Запускаем трекер авиабилетов с Telegram ботом...")
 
+	// Хранилище персональных настроек (JSON-файл)
+	store, err := NewSettingsStore(config.SettingsFile, config.DefaultUserSettings())
+	if err != nil {
+		log.Fatalf("Ошибка загрузки настроек: %v", err)
+	}
+	for _, adminID := range config.AdminUsers {
+		store.EnsureUser(adminID)
+	}
+
 	// Создаем поисковый сервис
 	flightSearch := NewFlightSearch(config)
 
 	// Создаем бота
-	bot, err := NewBot(config, flightSearch)
+	bot, err := NewBot(config, flightSearch, store)
 	if err != nil {
 		log.Fatalf("Ошибка создания бота: %v", err)
 	}
@@ -61,10 +71,9 @@ func main() {
 func startScheduledSearch(bot *Bot) func() {
 	c := cron.New()
 
-	// Автоматический поиск каждый день в 10:00
-	_, err := c.AddFunc("0 10 * * *", func() {
-		log.Printf("Запуск автоматического поиска по расписанию")
-		bot.RunScheduledSearch()
+	// Каждую минуту проверяем, у кого из пользователей наступило время автопоиска
+	_, err := c.AddFunc("* * * * *", func() {
+		bot.RunScheduledSearches(time.Now())
 	})
 	if err != nil {
 		log.Printf("📅 Ошибка добавления cron задачи: %v", err)
