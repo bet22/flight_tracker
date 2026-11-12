@@ -28,6 +28,7 @@ type AppConfig struct {
 	MaxFlightTime         int
 	DateFilter            DateFilter
 	SettingsFile          string
+	CitiesFile            string
 	ScheduleTime          string
 }
 
@@ -64,6 +65,9 @@ func (config *AppConfig) Validate() error {
 	}
 	if config.SettingsFile == "" {
 		errs = append(errs, "SETTINGS_FILE не установлен")
+	}
+	if config.CitiesFile == "" {
+		errs = append(errs, "CITIES_FILE не установлен")
 	}
 	if normalized, ok := normalizeScheduleTime(config.ScheduleTime); !ok {
 		errs = append(errs, fmt.Sprintf("SCHEDULE_TIME должен быть в формате HH:MM (текущее: %q)", config.ScheduleTime))
@@ -151,6 +155,7 @@ func loadConfig() (*AppConfig, error) {
 		MaxFlightTime:         getEnvInt("MAX_FLIGHT_TIME", 1440),
 		DateFilter:            dateFilter,
 		SettingsFile:          getEnv("SETTINGS_FILE", "data/settings.json"),
+		CitiesFile:            getEnv("CITIES_FILE", "data/cities.json"),
 		ScheduleTime:          getEnv("SCHEDULE_TIME", defaultScheduleTime),
 	}, nil
 }

@@ -42,40 +42,17 @@ type FlightSearch struct {
 	config *AppConfig
 }
 
+// FindAirportCode ищет аэропорты по коду, названию города или алиасу.
 func FindAirportCode(cityName string) ([]string, string) {
-	// Приводим к нижнему регистру и убираем пробелы
-	normalized := strings.ToLower(strings.TrimSpace(cityName))
-
-	// Прямой поиск
-	if codes, exists := CityAirports[normalized]; exists {
-		return codes, getCityName(codes[0])
+	codes, name, ok := cityStore().Lookup(cityName)
+	if !ok {
+		return nil, ""
 	}
-
-	// Поиск по частичному совпадению
-	for city, codes := range CityAirports {
-		if strings.Contains(normalized, city) || strings.Contains(city, normalized) {
-			return codes, getCityName(codes[0])
-		}
-	}
-
-	return nil, ""
+	return codes, name
 }
 
 func GetCityList() string {
-	var cities []string
-
-	// Собираем уникальные города (берем первый аэропорт для каждого города)
-	addedCities := make(map[string]bool)
-	for _, codes := range CityAirports {
-		if len(codes) > 0 && !addedCities[codes[0]] {
-			cityName := getCityName(codes[0])
-			cities = append(cities, fmt.Sprintf("%s - %s", codes[0], cityName))
-			addedCities[codes[0]] = true
-		}
-	}
-
-	sort.Strings(cities)
-	return strings.Join(cities, "\n")
+	return cityStore().GetCityList()
 }
 
 func NewFlightSearch(config *AppConfig) *FlightSearch {
@@ -320,10 +297,7 @@ func (fs *FlightSearch) formatFlightGroup(sb *strings.Builder, flights []Flight,
 
 // Вспомогательные функции
 func getCityName(iata string) string {
-	if name, ok := CityNames[iata]; ok {
-		return name
-	}
-	return iata
+	return cityStore().Name(iata)
 }
 
 func getRussianDayOfWeek(day time.Weekday) string {

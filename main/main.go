@@ -32,6 +32,11 @@ func main() {
 
 	fmt.Println("🚀 Запускаем трекер авиабилетов с Telegram ботом...")
 
+	// Справочник городов (JSON-файл с горячей перезагрузкой)
+	if err := InitCities(config.CitiesFile, seedCities()); err != nil {
+		log.Fatalf("Ошибка загрузки справочника городов: %v", err)
+	}
+
 	// Хранилище персональных настроек (JSON-файл)
 	store, err := NewSettingsStore(config.SettingsFile, config.DefaultUserSettings())
 	if err != nil {

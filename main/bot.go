@@ -115,6 +115,12 @@ func (b *Bot) Start() {
 			b.handleHelp(update.Message)
 		case "cities":
 			b.handleCitiesList(update.Message)
+		case "cityadd", "addcity":
+			b.handleCityAdd(update.Message)
+		case "cityalias":
+			b.handleCityAlias(update.Message)
+		case "cityremove", "removecity", "citydel":
+			b.handleCityRemove(update.Message)
 		case "origin":
 			b.handleOrigin(update.Message)
 		case "setprice":
@@ -396,6 +402,12 @@ func (b *Bot) sendHelp(chatID int64) {
 /schedule - Время автопоиска
 /cities - Список доступных городов
 
+<b>Справочник городов:</b>
+/cityadd HKT Пхукет - добавить или переименовать город
+/cityalias HKT пхукет,пхукет-тай - добавить синонимы для поиска
+/cityremove HKT - удалить город
+Изменения сохраняются в файл и применяются сразу, без перезапуска.
+
 <b>Фильтр дат:</b>
 /datefilter - Показать текущий фильтр дат
 /datefilter set 2027-06-01 2027-06-15 - Установить диапазон
@@ -529,12 +541,131 @@ func (b *Bot) handleCitiesList(message *tgbotapi.Message) {
 func (b *Bot) sendCitiesList(chatID int64) {
 	text := "🏙️ <b>Доступные города для поиска:</b>\n\n"
 	text += GetCityList()
-	text += "\n\n💡 <i>Используйте команду /search ГОРОД для поиска</i>\n"
-	text += "Например:\n"
-	text += "/search бангкок - поиск по названию\n"
-	text += "/search BKK - поиск по коду аэропорта\n"
-	text += "/search - поиск в текущее направление"
+	text += "\n\n➕ <b>Добавить город:</b>\n"
+	text += "<code>/cityadd HKT Пхукет</code>\n"
+	text += "<code>/cityalias HKT пхукет,пхукет-тай</code>\n"
+	text += "🗑 <b>Удалить:</b> <code>/cityremove HKT</code>\n\n"
+	text += "💡 Изменения применяются сразу, перезапуск не нужен.\n"
+	text += "Поиск: /search бангкок или /search BKK"
 	b.SendMessage(chatID, text)
+}
+
+// handleCityAdd добавляет город или обновляет его название.
+func (b *Bot) handleCityAdd(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+	chatID := message.Chat.ID
+
+	if len(args) < 3 {
+		b.SendMessage(chatID, "➕ <b>Добавление города</b>\n\n"+
+			"Пример: <code>/cityadd HKT Пхукет</code>\n\n"+
+			"Код — 3 латинские буквы (IATA). Название можно писать с пробелами.")
+		return
+	}
+
+	code := strings.ToUpper(args[1])
+	if !validIATACode(code) {
+		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Неверный код:</b> <code>%s</code>\n"+
+			"Код аэропорта — 3 латинские буквы, например <code>HKT</code>.", args[1]))
+		return
+	}
+
+	name := strings.TrimSpace(strings.Join(args[2:], " "))
+	city := City{Code: code, Name: name, Aliases: []string{name}}
+
+	if err := cityStore().Add(city); err != nil {
+		log.Printf("Не удалось добавить город %s: %v", code, err)
+		b.SendMessage(chatID, "❌ <b>Не удалось сохранить город.</b>\nПопробуйте ещё раз.")
+		return
+	}
+
+	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Город сохранён:</b>\n<code>%s</code> — %s\n\n"+
+		"Добавьте синонимы при необходимости:\n<code>/cityalias %s %s</code>",
+		code, name, code, strings.ToLower(name)))
+}
+
+// handleCityAlias добавляет алиасы для поиска по названию.
+func (b *Bot) handleCityAlias(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+	chatID := message.Chat.ID
+
+	if len(args) < 3 {
+		b.SendMessage(chatID, "🏷 <b>Синонимы города</b>\n\n"+
+			"Пример: <code>/cityalias HKT пхукет,пхукет-тай</code>\n\n"+
+			"Несколько вариантов указываются через запятую.")
+		return
+	}
+
+	code := strings.ToUpper(args[1])
+	if !validIATACode(code) {
+		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Неверный код:</b> <code>%s</code>", args[1]))
+		return
+	}
+
+	raw := strings.Join(args[2:], " ")
+	var aliases []string
+	for _, alias := range strings.Split(raw, ",") {
+		alias = strings.TrimSpace(alias)
+		if alias != "" {
+			aliases = append(aliases, alias)
+		}
+	}
+	if len(aliases) == 0 {
+		b.SendMessage(chatID, "❌ Укажите хотя бы один синоним через запятую.")
+		return
+	}
+
+	city, found, err := cityStore().AddAliases(code, aliases)
+	if err != nil {
+		log.Printf("Не удалось добавить синонимы для %s: %v", code, err)
+		b.SendMessage(chatID, "❌ <b>Не удалось сохранить синонимы.</b>\nПопробуйте ещё раз.")
+		return
+	}
+	if !found {
+		b.SendMessage(chatID, fmt.Sprintf("❌ Город с кодом <code>%s</code> не найден.\n"+
+			"Сначала добавьте его: <code>/cityadd %s Название</code>", code, code))
+		return
+	}
+
+	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Синонимы для %s — %s:</b>\n%s",
+		city.Code, city.Name, strings.Join(city.Aliases, ", ")))
+}
+
+// handleCityRemove удаляет город из справочника.
+func (b *Bot) handleCityRemove(message *tgbotapi.Message) {
+	args := strings.Fields(message.Text)
+	chatID := message.Chat.ID
+
+	if len(args) < 2 {
+		b.SendMessage(chatID, "🗑 <b>Удаление города</b>\n\nПример: <code>/cityremove HKT</code>")
+		return
+	}
+
+	code := strings.ToUpper(args[1])
+	removed, err := cityStore().Remove(code)
+	if err != nil {
+		log.Printf("Не удалось удалить город %s: %v", code, err)
+		b.SendMessage(chatID, "❌ <b>Не удалось удалить город.</b>\nПопробуйте ещё раз.")
+		return
+	}
+	if !removed {
+		b.SendMessage(chatID, fmt.Sprintf("❌ Город с кодом <code>%s</code> не найден.", code))
+		return
+	}
+
+	b.SendMessage(chatID, fmt.Sprintf("🗑 <b>Город удалён:</b> <code>%s</code>", code))
+}
+
+// validIATACode проверяет, что код состоит из трёх латинских букв.
+func validIATACode(code string) bool {
+	if len(code) != 3 {
+		return false
+	}
+	for _, r := range code {
+		if r < 'A' || r > 'Z' {
+			return false
+		}
+	}
+	return true
 }
 
 func (b *Bot) setOrigin(userID, chatID int64, cityName string) bool {
@@ -571,14 +702,7 @@ func (b *Bot) setOrigin(userID, chatID int64, cityName string) bool {
 }
 
 func FindOriginAirportCode(cityName string) ([]string, string) {
-	normalized := strings.ToLower(strings.TrimSpace(cityName))
-
-	// Прямой поиск test
-	if codes, exists := CityAirports[normalized]; exists {
-		return codes, getCityName(codes[0])
-	}
-	return nil, ""
-
+	return FindAirportCode(cityName)
 }
 
 func (b *Bot) handleDateFilter(message *tgbotapi.Message) {
@@ -857,19 +981,12 @@ func cityNamesText(codes []string) string {
 	return strings.Join(names, ", ")
 }
 
-// cityOptions возвращает уникальные аэропорты из справочника,
+// cityOptions возвращает аэропорты из справочника,
 // отсортированные по названию города.
 func cityOptions() []cityOption {
-	seen := make(map[string]bool)
-	var options []cityOption
-	for _, codes := range CityAirports {
-		for _, code := range codes {
-			if seen[code] {
-				continue
-			}
-			seen[code] = true
-			options = append(options, cityOption{code: code, name: getCityName(code)})
-		}
+	options := make([]cityOption, 0)
+	for _, city := range cityStore().All() {
+		options = append(options, cityOption{code: city.Code, name: city.Name})
 	}
 
 	sort.Slice(options, func(i, j int) bool {
