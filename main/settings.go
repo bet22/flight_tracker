@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +15,10 @@ import (
 	"time"
 )
 
-const defaultScheduleTime = "10:00"
+const (
+	defaultScheduleTime = "10:00"
+	maxOriginCities     = 2
+)
 
 // Schedule — персональное расписание автоматического поиска.
 type Schedule struct {
@@ -24,13 +28,15 @@ type Schedule struct {
 
 // UserSettings — персональные настройки поиска и планировщика.
 type UserSettings struct {
-	OriginIATA      []string   `json:"origin_iata"`
-	DestinationIATA string     `json:"destination_iata"`
-	MaxPrice        int        `json:"max_price"`
-	MonthsToSearch  int        `json:"months_to_search"`
-	MaxFlightTime   int        `json:"max_flight_time"`
-	DateFilter      DateFilter `json:"date_filter"`
-	Schedule        Schedule   `json:"schedule"`
+	OriginIATA           []string       `json:"origin_iata"`
+	DestinationIATA      string         `json:"destination_iata"`
+	MaxPrice             int            `json:"max_price"`
+	MonthsToSearch       int            `json:"months_to_search"`
+	MaxFlightTime        int            `json:"max_flight_time"`
+	DateFilter           DateFilter     `json:"date_filter"`
+	Schedule             Schedule       `json:"schedule"`
+	OriginCityUsage      map[string]int `json:"origin_city_usage,omitempty"`
+	DestinationCityUsage map[string]int `json:"destination_city_usage,omitempty"`
 }
 
 // Clone возвращает независимую копию настроек.
@@ -38,7 +44,98 @@ func (s UserSettings) Clone() UserSettings {
 	c := s
 	c.OriginIATA = slices.Clone(s.OriginIATA)
 	c.DateFilter = s.DateFilter.Clone()
+	c.OriginCityUsage = maps.Clone(s.OriginCityUsage)
+	c.DestinationCityUsage = maps.Clone(s.DestinationCityUsage)
 	return c
+}
+
+// normalizeIATACode приводит код аэропорта к верхнему регистру.
+func normalizeIATACode(code string) string {
+	return strings.ToUpper(strings.TrimSpace(code))
+}
+
+// originToggleResult — результат попытки добавить/убрать город вылета.
+type originToggleResult int
+
+const (
+	originToggleAdded originToggleResult = iota
+	originToggleRemoved
+	originToggleLimit
+	originToggleLast
+)
+
+// SetOrigins задаёт до двух городов вылета и учитывает их использование.
+func (s *UserSettings) SetOrigins(codes []string) bool {
+	normalized := make([]string, 0, maxOriginCities)
+	seen := make(map[string]bool)
+
+	for _, code := range codes {
+		code = normalizeIATACode(code)
+		if code == "" || seen[code] {
+			continue
+		}
+		seen[code] = true
+		normalized = append(normalized, code)
+	}
+
+	if len(normalized) == 0 || len(normalized) > maxOriginCities {
+		return false
+	}
+
+	s.OriginIATA = normalized
+	for _, code := range normalized {
+		s.recordOriginUse(code)
+	}
+	return true
+}
+
+// ToggleOrigin добавляет или убирает город вылета, не давая опустить список до нуля.
+func (s *UserSettings) ToggleOrigin(code string) originToggleResult {
+	code = normalizeIATACode(code)
+	if code == "" {
+		return originToggleLimit
+	}
+
+	for i, existing := range s.OriginIATA {
+		if existing != code {
+			continue
+		}
+		if len(s.OriginIATA) == 1 {
+			return originToggleLast
+		}
+		s.OriginIATA = append(s.OriginIATA[:i], s.OriginIATA[i+1:]...)
+		return originToggleRemoved
+	}
+
+	if len(s.OriginIATA) >= maxOriginCities {
+		return originToggleLimit
+	}
+
+	s.OriginIATA = append(s.OriginIATA, code)
+	s.recordOriginUse(code)
+	return originToggleAdded
+}
+
+// SetDestination задаёт город прилёта и учитывает его использование.
+func (s *UserSettings) SetDestination(code string) bool {
+	code = normalizeIATACode(code)
+	if code == "" {
+		return false
+	}
+
+	s.DestinationIATA = code
+	if s.DestinationCityUsage == nil {
+		s.DestinationCityUsage = make(map[string]int)
+	}
+	s.DestinationCityUsage[code]++
+	return true
+}
+
+func (s *UserSettings) recordOriginUse(code string) {
+	if s.OriginCityUsage == nil {
+		s.OriginCityUsage = make(map[string]int)
+	}
+	s.OriginCityUsage[code]++
 }
 
 // Clone возвращает копию фильтра дат.
@@ -50,13 +147,20 @@ func (df DateFilter) Clone() DateFilter {
 
 // DefaultUserSettings собирает настройки по умолчанию из переменных окружения.
 func (config *AppConfig) DefaultUserSettings() UserSettings {
+	origins := slices.Clone(config.OriginIATA)
+	if len(origins) > maxOriginCities {
+		origins = origins[:maxOriginCities]
+	}
+
 	return UserSettings{
-		OriginIATA:      slices.Clone(config.OriginIATA),
-		DestinationIATA: config.DestinationIATA,
-		MaxPrice:        config.MaxPrice,
-		MonthsToSearch:  config.MonthsToSearch,
-		MaxFlightTime:   config.MaxFlightTime,
-		DateFilter:      config.DateFilter.Clone(),
+		OriginIATA:           origins,
+		DestinationIATA:      config.DestinationIATA,
+		MaxPrice:             config.MaxPrice,
+		MonthsToSearch:       config.MonthsToSearch,
+		MaxFlightTime:        config.MaxFlightTime,
+		DateFilter:           config.DateFilter.Clone(),
+		OriginCityUsage:      make(map[string]int),
+		DestinationCityUsage: make(map[string]int),
 		Schedule: Schedule{
 			Enabled: true,
 			Time:    config.ScheduleTime,
@@ -239,6 +343,17 @@ func fillDefaults(settings *UserSettings, defaults UserSettings) bool {
 
 	if len(settings.OriginIATA) == 0 {
 		settings.OriginIATA = slices.Clone(defaults.OriginIATA)
+		changed = true
+	} else if len(settings.OriginIATA) > maxOriginCities {
+		settings.OriginIATA = slices.Clone(settings.OriginIATA[:maxOriginCities])
+		changed = true
+	}
+	if settings.OriginCityUsage == nil {
+		settings.OriginCityUsage = make(map[string]int)
+		changed = true
+	}
+	if settings.DestinationCityUsage == nil {
+		settings.DestinationCityUsage = make(map[string]int)
 		changed = true
 	}
 	if settings.DestinationIATA == "" {

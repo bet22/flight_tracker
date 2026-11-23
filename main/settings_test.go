@@ -100,6 +100,82 @@ func TestSettingsStoreIndependentCopies(t *testing.T) {
 	}
 }
 
+func TestToggleOriginLimitsAndUsage(t *testing.T) {
+	settings := testDefaults()
+	settings.OriginIATA = nil
+
+	if got := settings.ToggleOrigin("LED"); got != originToggleAdded {
+		t.Fatalf("первый город должен добавляться, получено %v", got)
+	}
+	if got := settings.ToggleOrigin("BAX"); got != originToggleAdded {
+		t.Fatalf("второй город должен добавляться, получено %v", got)
+	}
+	if got := settings.ToggleOrigin("SVX"); got != originToggleLimit {
+		t.Fatalf("третий город не должен добавляться, получено %v", got)
+	}
+	if len(settings.OriginIATA) != 2 {
+		t.Fatalf("ожидалось 2 города вылета, получено %v", settings.OriginIATA)
+	}
+
+	if got := settings.ToggleOrigin("LED"); got != originToggleRemoved {
+		t.Fatalf("город должен убираться, получено %v", got)
+	}
+	if got := settings.ToggleOrigin("BAX"); got != originToggleLast {
+		t.Fatalf("последний город не должен убираться, получено %v", got)
+	}
+	if got := settings.ToggleOrigin("LED"); got != originToggleAdded {
+		t.Fatalf("город должен добавляться повторно, получено %v", got)
+	}
+
+	if settings.OriginCityUsage["LED"] != 2 {
+		t.Fatalf("LED должен учитываться дважды, получено %d", settings.OriginCityUsage["LED"])
+	}
+}
+
+func TestCityUsageIsPerUserAndPersisted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+	store, err := NewSettingsStore(path, testDefaults())
+	if err != nil {
+		t.Fatalf("NewSettingsStore: %v", err)
+	}
+
+	store.EnsureUser(1)
+	store.EnsureUser(2)
+
+	if err := store.Update(1, func(s *UserSettings) error {
+		s.ToggleOrigin("LED")
+		s.SetDestination("HKT")
+		return nil
+	}); err != nil {
+		t.Fatalf("Update: %v", err)
+	}
+
+	reloaded, err := NewSettingsStore(path, testDefaults())
+	if err != nil {
+		t.Fatalf("NewSettingsStore reload: %v", err)
+	}
+
+	first := reloaded.Get(1)
+	if first.OriginCityUsage["LED"] != 1 || first.DestinationCityUsage["HKT"] != 1 {
+		t.Fatalf("статистика пользователя 1 не сохранилась: %+v", first)
+	}
+	second := reloaded.Get(2)
+	if len(second.OriginCityUsage) != 0 || len(second.DestinationCityUsage) != 0 {
+		t.Fatalf("статистика пользователя 2 изменилась: %+v", second)
+	}
+}
+
+func TestCityOptionsSortedByUsage(t *testing.T) {
+	options := cityOptions(map[string]int{"OVB": 5, "LED": 2})
+	if len(options) == 0 {
+		t.Fatal("справочник городов пуст")
+	}
+	if options[0].code != "OVB" || options[1].code != "LED" {
+		t.Fatalf("города должны сортироваться по частоте использования, получено %v, %v",
+			options[0].code, options[1].code)
+	}
+}
+
 func TestDateFilterRangeIncludesLastDay(t *testing.T) {
 	start := time.Date(2027, 6, 1, 0, 0, 0, 0, time.UTC)
 	end := time.Date(2027, 6, 15, 0, 0, 0, 0, time.UTC)

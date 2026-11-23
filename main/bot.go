@@ -273,7 +273,7 @@ func (b *Bot) sendStatus(userID, chatID int64) {
 	text := fmt.Sprintf(`📊 <b>Ваши настройки</b>
 
 <b>Направления поиска:</b>
-• %s → %s
+• 🛫 %s → 🛬 %s
 
 <b>Параметры:</b>
 • Макс. цена: %d руб.
@@ -398,7 +398,7 @@ func (b *Bot) sendHelp(chatID int64) {
 
 <b>Настройки (у каждого свои):</b>
 /setprice - Показать/изменить макс. цену
-/origin - Управление городом вылета
+/origin - Города вылета (до двух, через запятую)
 /schedule - Время автопоиска
 /cities - Список доступных городов
 
@@ -422,7 +422,9 @@ func (b *Bot) sendHelp(chatID int64) {
 
 <b>Кнопки:</b>
 🔍 «Начать поиск» — запуск поиска.
-🛫 «Город вылета» и 🛬 «Город прилёта» — выбор аэропорта из списка.
+🛫 «Города вылета» — можно выбрать до двух городов; нажмите на город ещё раз, чтобы убрать его.
+🛬 «Город прилёта» — выбор аэропорта из списка.
+Часто выбираемые вами города поднимаются в начало списка (статистика у каждого пользователя своя).
 Остальные кнопки открывают разделы бота.
 
 <b>Автоматический поиск:</b>
@@ -438,7 +440,8 @@ func (b *Bot) handleOrigin(message *tgbotapi.Message) {
 
 	if len(args) < 2 {
 		b.SendMessage(message.Chat.ID,
-			"❌ Укажите город вылета. Например: /origin москва")
+			"❌ Укажите город вылета. Например: /origin москва\n"+
+				"Можно задать два города через запятую: /origin москва,петербург")
 		return
 	}
 	cityName := strings.Join(args[1:], " ")
@@ -670,34 +673,49 @@ func validIATACode(code string) bool {
 
 func (b *Bot) setOrigin(userID, chatID int64, cityName string) bool {
 	settings := b.settingsFor(userID)
-	codes, _ := FindOriginAirportCode(cityName)
 
-	if codes == nil {
-		b.SendMessage(chatID, fmt.Sprintf("❌ <b>Город вылета '%s' не найден.</b>\n\n"+
-			"💡 <i>Используйте:</i>\n"+"/origin москва - установить Москву", cityName))
+	// Можно указать два города через запятую: /origin москва,петербург
+	var codes []string
+	for _, part := range strings.Split(cityName, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		found, _ := FindOriginAirportCode(part)
+		if len(found) == 0 {
+			b.SendMessage(chatID, fmt.Sprintf("❌ <b>Город вылета '%s' не найден.</b>\n\n"+
+				"💡 <i>Используйте:</i>\n"+
+				"/origin москва — установить Москву\n"+
+				"/origin москва,петербург — два города вылета", part))
+			return false
+		}
+		codes = append(codes, found[0])
+	}
+
+	if len(codes) == 0 {
+		b.SendMessage(chatID, "❌ Укажите хотя бы один город вылета.")
+		return false
+	}
+	if len(codes) > maxOriginCities {
+		b.SendMessage(chatID, fmt.Sprintf("❌ Можно указать не больше %d городов вылета.", maxOriginCities))
 		return false
 	}
 
-	origin := codes[0]
 	oldOrigins := settings.OriginIATA
-
 	if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
-		settings.OriginIATA = []string{origin}
+		if !settings.SetOrigins(codes) {
+			return fmt.Errorf("не удалось установить города вылета")
+		}
 		return nil
 	}) {
 		return false
 	}
 
-	var originInfo string
-	if len(codes) > 1 {
-		originInfo = fmt.Sprintf("\n🏢 Доступные аэропорты: %s", strings.Join(codes, ", "))
-	}
-
-	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Город вылета изменён:</b>\n🛫 %s → %s\n\n🛬 Город прилёта: %s%s",
+	settings = b.settingsFor(userID)
+	b.SendMessage(chatID, fmt.Sprintf("✅ <b>Города вылета изменены:</b>\n🛫 %s → %s\n\n🛬 Город прилёта: %s",
 		cityNamesText(oldOrigins),
-		getCityName(origin),
-		getCityName(settings.DestinationIATA),
-		originInfo))
+		cityNamesText(settings.OriginIATA),
+		getCityName(settings.DestinationIATA)))
 	return true
 }
 
@@ -878,6 +896,12 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		messageID = query.Message.MessageID
 	}
 
+	// Меню городов само отвечает на callback, чтобы показать результат действия.
+	if strings.HasPrefix(query.Data, "origin:") || strings.HasPrefix(query.Data, "dest:") {
+		b.handleCityCallback(query, userID, chatID, messageID)
+		return
+	}
+
 	if query.Data == "search" {
 		// Отвечаем сразу, чтобы у пользователя не крутился индикатор загрузки
 		b.answerCallback(query.ID, "🔍 Запускаю поиск…", false)
@@ -890,8 +914,6 @@ func (b *Bot) handleCallback(query *tgbotapi.CallbackQuery) {
 		// Кнопка-индикатор страницы — ничего не делаем.
 	case query.Data == "menu:main":
 		b.sendOrEdit(chatID, messageID, "👋 <b>Главное меню</b>\n\nВыберите действие:", mainKeyboard())
-	case strings.HasPrefix(query.Data, "origin:"), strings.HasPrefix(query.Data, "dest:"):
-		b.handleCityCallback(query, userID, chatID, messageID)
 	case strings.HasPrefix(query.Data, "schedule:"):
 		b.handleScheduleCallback(query, userID, chatID, messageID)
 	default:
@@ -936,7 +958,7 @@ func mainKeyboard() tgbotapi.InlineKeyboardMarkup {
 			tgbotapi.NewInlineKeyboardButtonData("🔍 Начать поиск", "search"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("🛫 Город вылета", "origin:page:0"),
+			tgbotapi.NewInlineKeyboardButtonData("🛫 Города вылета", "origin:page:0"),
 			tgbotapi.NewInlineKeyboardButtonData("🛬 Город прилёта", "dest:page:0"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
@@ -981,15 +1003,25 @@ func cityNamesText(codes []string) string {
 	return strings.Join(names, ", ")
 }
 
-// cityOptions возвращает аэропорты из справочника,
-// отсортированные по названию города.
-func cityOptions() []cityOption {
+// allCityOptions возвращает аэропорты из справочника в порядке файла.
+func allCityOptions() []cityOption {
 	options := make([]cityOption, 0)
 	for _, city := range cityStore().All() {
 		options = append(options, cityOption{code: city.Code, name: city.Name})
 	}
+	return options
+}
+
+// cityOptions сортирует города: сначала часто выбранные этим пользователем,
+// затем по названию. usage — персональная статистика пользователя.
+func cityOptions(usage map[string]int) []cityOption {
+	options := allCityOptions()
 
 	sort.Slice(options, func(i, j int) bool {
+		countI, countJ := usage[options[i].code], usage[options[j].code]
+		if countI != countJ {
+			return countI > countJ
+		}
 		if options[i].name == options[j].name {
 			return options[i].code < options[j].code
 		}
@@ -1001,7 +1033,7 @@ func cityOptions() []cityOption {
 
 // findCityOption ищет аэропорт по IATA-коду.
 func findCityOption(code string) (cityOption, bool) {
-	for _, opt := range cityOptions() {
+	for _, opt := range allCityOptions() {
 		if opt.code == code {
 			return opt, true
 		}
@@ -1012,7 +1044,9 @@ func findCityOption(code string) (cityOption, bool) {
 const cityPageSize = 12
 
 // cityMenuKeyboard строит постраничный список аэропортов.
-func cityMenuKeyboard(prefix string, options []cityOption, page int) tgbotapi.InlineKeyboardMarkup {
+// Для вылета кнопки переключают выбор (можно выбрать до двух городов),
+// для прилёта — просто устанавливают город.
+func cityMenuKeyboard(prefix string, options []cityOption, page int, selected []string, doneLabel string) tgbotapi.InlineKeyboardMarkup {
 	totalPages := (len(options) + cityPageSize - 1) / cityPageSize
 	if totalPages < 1 {
 		totalPages = 1
@@ -1030,11 +1064,22 @@ func cityMenuKeyboard(prefix string, options []cityOption, page int) tgbotapi.In
 		end = len(options)
 	}
 
+	action := "set"
+	if prefix == "origin" {
+		action = "toggle"
+	}
+
 	var rows [][]tgbotapi.InlineKeyboardButton
 	var row []tgbotapi.InlineKeyboardButton
 	for _, opt := range options[start:end] {
-		row = append(row, tgbotapi.NewInlineKeyboardButtonData(
-			fmt.Sprintf("%s — %s", opt.code, opt.name), prefix+":set:"+opt.code))
+		label := fmt.Sprintf("%s — %s", opt.code, opt.name)
+		if slices.Contains(selected, opt.code) {
+			label = "✅ " + label
+		} else if action == "toggle" {
+			label = "⬜ " + label
+		}
+		callback := fmt.Sprintf("%s:%s:%s:%d", prefix, action, opt.code, page)
+		row = append(row, tgbotapi.NewInlineKeyboardButtonData(label, callback))
 		if len(row) == 2 {
 			rows = append(rows, row)
 			row = nil
@@ -1050,35 +1095,53 @@ func cityMenuKeyboard(prefix string, options []cityOption, page int) tgbotapi.In
 		tgbotapi.NewInlineKeyboardButtonData("➡️", fmt.Sprintf("%s:page:%d", prefix, page+1)),
 	))
 	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
-		tgbotapi.NewInlineKeyboardButtonData("🏠 В меню", "menu:main"),
+		tgbotapi.NewInlineKeyboardButtonData(doneLabel, "menu:main"),
 	))
 
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
 // showCityMenu показывает список городов для выбора вылета или прилёта.
-func (b *Bot) showCityMenu(userID, chatID int64, messageID int, isOrigin bool, page int) {
+func (b *Bot) showCityMenu(userID, chatID int64, messageID int, isOrigin bool, page int, hint string) {
 	settings := b.settingsFor(userID)
 
 	prefix := "dest"
+	usage := settings.DestinationCityUsage
+	selected := []string{settings.DestinationIATA}
+	doneLabel := "🏠 В меню"
 	title := fmt.Sprintf("🛬 <b>Выберите город прилёта</b>\n\nТекущий: <b>%s</b>",
 		getCityName(settings.DestinationIATA))
+
 	if isOrigin {
 		prefix = "origin"
-		title = fmt.Sprintf("🛫 <b>Выберите город вылета</b>\n\nТекущий: <b>%s</b>",
-			cityNamesText(settings.OriginIATA))
+		usage = settings.OriginCityUsage
+		selected = settings.OriginIATA
+		doneLabel = "✅ Готово"
+		title = fmt.Sprintf("🛫 <b>Выберите города вылета</b>\n\n"+
+			"Выбрано (%d/%d): <b>%s</b>\n"+
+			"Нажмите на город, чтобы добавить или убрать его.",
+			len(settings.OriginIATA), maxOriginCities, cityNamesText(settings.OriginIATA))
 	}
 
-	keyboard := cityMenuKeyboard(prefix, cityOptions(), page)
+	if hint != "" {
+		title += "\n\n⚠️ " + hint
+	}
 
+	keyboard := cityMenuKeyboard(prefix, cityOptions(usage), page, selected, doneLabel)
 	b.sendOrEdit(chatID, messageID, title, keyboard)
 }
 
 // handleCityCallback обрабатывает выбор страницы и самого города.
 func (b *Bot) handleCityCallback(query *tgbotapi.CallbackQuery, userID, chatID int64, messageID int) {
-	parts := strings.Split(query.Data, ":")
+	notice := b.handleCityAction(query.Data, userID, chatID, messageID)
+	b.answerCallback(query.ID, notice, false)
+}
+
+// handleCityAction возвращает текст для всплывающего уведомления.
+func (b *Bot) handleCityAction(data string, userID, chatID int64, messageID int) string {
+	parts := strings.Split(data, ":")
 	if len(parts) < 2 {
-		return
+		return "❌ Некорректная кнопка."
 	}
 
 	isOrigin := parts[0] == "origin"
@@ -1089,43 +1152,66 @@ func (b *Bot) handleCityCallback(query *tgbotapi.CallbackQuery, userID, chatID i
 		if len(parts) >= 3 {
 			page, _ = strconv.Atoi(parts[2])
 		}
-		b.showCityMenu(userID, chatID, messageID, isOrigin, page)
+		b.showCityMenu(userID, chatID, messageID, isOrigin, page, "")
+		return ""
 
-	case "set":
+	case "set", "toggle":
 		if len(parts) < 3 {
-			return
+			return "❌ Некорректная кнопка."
 		}
-		code := strings.ToUpper(parts[2])
-		option, ok := findCityOption(code)
+		option, ok := findCityOption(normalizeIATACode(parts[2]))
 		if !ok {
-			b.SendMessage(chatID, "❌ Неизвестный аэропорт.")
-			return
+			return "❌ Неизвестный аэропорт."
+		}
+
+		page := 0
+		if len(parts) >= 4 {
+			page, _ = strconv.Atoi(parts[3])
+		}
+
+		if isOrigin {
+			var result originToggleResult
+			if err := b.store.Update(userID, func(settings *UserSettings) error {
+				result = settings.ToggleOrigin(option.code)
+				return nil
+			}); err != nil {
+				log.Printf("Не удалось сохранить города вылета пользователя %d: %v", userID, err)
+				return "❌ Не удалось сохранить настройки."
+			}
+
+			var hint string
+			switch result {
+			case originToggleAdded:
+				hint = "✅ Город добавлен"
+			case originToggleRemoved:
+				hint = "✅ Город убран"
+			case originToggleLimit:
+				hint = fmt.Sprintf("⚠️ Можно выбрать не больше %d городов вылета", maxOriginCities)
+			case originToggleLast:
+				hint = "⚠️ Должен остаться хотя бы один город вылета"
+			}
+
+			b.showCityMenu(userID, chatID, messageID, true, page, hint)
+			return hint
 		}
 
 		if !b.updateSettings(userID, chatID, func(settings *UserSettings) error {
-			if isOrigin {
-				settings.OriginIATA = []string{option.code}
-			} else {
-				settings.DestinationIATA = option.code
+			if !settings.SetDestination(option.code) {
+				return fmt.Errorf("пустой код аэропорта")
 			}
 			return nil
 		}) {
-			return
+			return "❌ Не удалось сохранить настройки."
 		}
 
 		settings := b.settingsFor(userID)
-
-		var text string
-		if isOrigin {
-			text = fmt.Sprintf("✅ <b>Город вылета изменён:</b>\n🛫 %s\n\n🛬 Город прилёта: %s",
-				getCityName(option.code), getCityName(settings.DestinationIATA))
-		} else {
-			text = fmt.Sprintf("✅ <b>Город прилёта изменён:</b>\n🛬 %s\n\n🛫 Город вылета: %s",
-				getCityName(option.code), cityNamesText(settings.OriginIATA))
-		}
-
+		text := fmt.Sprintf("✅ <b>Город прилёта изменён:</b>\n🛬 %s\n\n🛫 Города вылета: %s",
+			getCityName(option.code), cityNamesText(settings.OriginIATA))
 		b.sendOrEdit(chatID, messageID, text, mainKeyboard())
+		return "✅ Город прилёта изменён"
 	}
+
+	return "❓ Неизвестное действие."
 }
 
 // sendOrEdit обновляет существующее сообщение или отправляет новое,

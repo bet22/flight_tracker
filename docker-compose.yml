@@ -1,6 +1,7 @@
 services:
   app:
     build: .
+    container_name: flight_tracker
     env_file: /opt/flight_tracker/config/.env
     restart: unless-stopped
     volumes:
